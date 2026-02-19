@@ -1,0 +1,63 @@
+# Build output
+build/
+build_off/
+
+# ONNX Runtime Training (large binaries from NuGet)
+# Keep only include/ headers; exclude extracted NuGet, binaries, zip
+third_party/onnxruntime-training/extracted/
+third_party/onnxruntime-training/bin/
+third_party/onnxruntime-training/lib/
+third_party/onnxruntime-training/*.nupkg
+third_party/onnxruntime-training/*.zip
+
+# User profile data (personal databases, adapters, training artifacts)
+profiles/
+
+# Qt Creator / IDE
+*.user
+*.autosave
+CMakeLists.txt.user*
+.qmlls.ini
+
+# CMake
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+
+# Visual Studio
+.vs/
+*.vcxproj.user
+*.suo
+*.sdf
+*.opensdf
+*.ipch
+Debug/
+Release/
+x64/
+x86/
+*.pdb
+*.ilk
+
+# Compiled objects
+*.obj
+*.o
+*.a
+*.lib
+*.dll
+*.exe
+*.exp
+
+# Python (tools/)
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# Logs
+*.log
+
+# OS files
+Thumbs.db
+desktop.ini
+.DS_Store
