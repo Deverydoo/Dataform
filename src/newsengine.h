@@ -43,6 +43,8 @@ public:
     bool isFetchingNews() const { return m_isFetchingNews; }
     QString currentPhase() const { return m_currentPhase; }
     int cyclesCompletedToday() const { return m_cyclesCompletedToday; }
+    bool canStartCycle() const;
+    void requestStart();
 
 public slots:
     void onIdleWindowOpened();
@@ -54,6 +56,7 @@ signals:
     void cyclesCompletedTodayChanged();
     void newsCycleComplete(const QString &headline, const QString &url);
     void newsError(const QString &error);
+    void cycleFinished();
 
 private slots:
     void onLLMResponse(const QString &response);
@@ -81,7 +84,6 @@ private:
     void phaseStore();
 
     // Helpers
-    bool canStartCycle() const;
     void resetDailyCounterIfNeeded();
     QList<NewsHeadline> parseRssFeed(const QByteArray &xml) const;
     bool isHeadlineSeen(const QString &url) const;

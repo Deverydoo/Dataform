@@ -68,6 +68,9 @@ public:
     // Manual scan trigger from QML
     Q_INVOKABLE void scanConversationsForTraits();
 
+    bool canStartCycle() const;
+    void requestStart();
+
 signals:
     void isExtractingChanged();
     void extractionCountChanged();
@@ -75,6 +78,7 @@ signals:
     void lastResponseChanged();
     void traitsExtracted(int count);
     void extractionError(const QString &error);
+    void cycleFinished();
     void leanScoreChanged();
     void leanLabelChanged();
     void leanAnalyzedTsChanged();

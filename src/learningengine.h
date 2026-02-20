@@ -36,6 +36,8 @@ public:
 
     Q_INVOKABLE void startLearningPlan(const QString &topic);
     Q_INVOKABLE QVariantList getActivePlansForQml();
+    bool canStartCycle() const;
+    void requestStart();
 
 public slots:
     void onIdleWindowOpened();
@@ -48,6 +50,7 @@ signals:
     void totalLessonsChanged();
     void planCreated(const QString &topic, int lessons);
     void lessonReady(const QString &topic, int lessonNum);
+    void cycleFinished();
 
 private slots:
     void onLLMResponse(const QString &response);
@@ -58,7 +61,6 @@ private:
 
     void advancePhase();
     void setPhase(Phase phase);
-    bool canStartCycle() const;
 
     void phaseGeneratePlan();
     void phaseResearchLesson();

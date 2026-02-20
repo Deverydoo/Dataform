@@ -1333,6 +1333,18 @@ bool MemoryStore::migrateEpisodicSchema()
         }
     });
 
+    // Smart goal check-in intervals
+    migrations.append({9, 10, "Add checkin_interval_days to goals table",
+        [](QSqlDatabase &db) -> bool {
+            QSqlQuery q(db);
+            if (!q.exec("ALTER TABLE goals ADD COLUMN checkin_interval_days INTEGER DEFAULT 7")) {
+                if (!q.lastError().text().contains("duplicate column", Qt::CaseInsensitive))
+                    return false;
+            }
+            return true;
+        }
+    });
+
     return SchemaMigrator::migrateDatabase(m_episodicDb, migrations,
                                             SchemaMigrator::EPISODIC_DB_VERSION);
 }
@@ -1468,21 +1480,40 @@ QVariantList MemoryStore::getPendingRemindersForQml()
 
 // --- Goals CRUD ---
 
-qint64 MemoryStore::insertGoal(const QString &title, const QString &description, qint64 episodeId)
+qint64 MemoryStore::insertGoal(const QString &title, const QString &description,
+                               qint64 episodeId, int checkinIntervalDays)
 {
     if (!m_initialized) return -1;
     QSqlQuery q(m_episodicDb);
-    q.prepare("INSERT INTO goals (title, description, source_episode_id) VALUES (?, ?, ?)");
+    q.prepare("INSERT INTO goals (title, description, source_episode_id, checkin_interval_days) "
+              "VALUES (?, ?, ?, ?)");
     q.addBindValue(title);
     q.addBindValue(description);
     q.addBindValue(episodeId);
+    q.addBindValue(qBound(1, checkinIntervalDays, 365));
     if (q.exec()) {
         qint64 id = q.lastInsertId().toLongLong();
-        qDebug() << "Goal inserted:" << id << title;
+        qDebug() << "Goal inserted:" << id << title << "(check-in every" << checkinIntervalDays << "days)";
         return id;
     }
     qWarning() << "Failed to insert goal:" << q.lastError().text();
     return -1;
+}
+
+static GoalRecord readGoalRecord(QSqlQuery &q)
+{
+    GoalRecord g;
+    g.id = q.value(0).toLongLong();
+    g.title = q.value(1).toString();
+    g.description = q.value(2).toString();
+    g.status = q.value(3).toInt();
+    g.createdTs = QDateTime::fromString(q.value(4).toString(), Qt::ISODate);
+    g.lastCheckinTs = QDateTime::fromString(q.value(5).toString(), Qt::ISODate);
+    g.sourceEpisodeId = q.value(6).toLongLong();
+    g.checkinCount = q.value(7).toInt();
+    g.checkinIntervalDays = q.value(8).toInt();
+    if (g.checkinIntervalDays < 1) g.checkinIntervalDays = 7;
+    return g;
 }
 
 QList<GoalRecord> MemoryStore::getActiveGoals() const
@@ -1491,20 +1522,11 @@ QList<GoalRecord> MemoryStore::getActiveGoals() const
     if (!m_initialized) return results;
     QSqlQuery q(m_episodicDb);
     q.prepare("SELECT id, title, description, status, created_ts, last_checkin_ts, "
-              "source_episode_id, checkin_count FROM goals WHERE status = 0 "
-              "ORDER BY created_ts DESC");
+              "source_episode_id, checkin_count, checkin_interval_days "
+              "FROM goals WHERE status = 0 ORDER BY created_ts DESC");
     if (q.exec()) {
         while (q.next()) {
-            GoalRecord g;
-            g.id = q.value(0).toLongLong();
-            g.title = q.value(1).toString();
-            g.description = q.value(2).toString();
-            g.status = q.value(3).toInt();
-            g.createdTs = QDateTime::fromString(q.value(4).toString(), Qt::ISODate);
-            g.lastCheckinTs = QDateTime::fromString(q.value(5).toString(), Qt::ISODate);
-            g.sourceEpisodeId = q.value(6).toLongLong();
-            g.checkinCount = q.value(7).toInt();
-            results.append(g);
+            results.append(readGoalRecord(q));
         }
     }
     return results;
@@ -1530,29 +1552,22 @@ bool MemoryStore::updateGoalCheckin(qint64 id)
     return q.exec();
 }
 
-QList<GoalRecord> MemoryStore::getGoalsNeedingCheckin(int daysSince) const
+QList<GoalRecord> MemoryStore::getGoalsNeedingCheckin() const
 {
     QList<GoalRecord> results;
     if (!m_initialized) return results;
     QSqlQuery q(m_episodicDb);
+    // Each goal has its own check-in interval — compare last_checkin_ts against
+    // the goal's checkin_interval_days rather than a global constant.
     q.prepare("SELECT id, title, description, status, created_ts, last_checkin_ts, "
-              "source_episode_id, checkin_count FROM goals WHERE status = 0 "
+              "source_episode_id, checkin_count, checkin_interval_days "
+              "FROM goals WHERE status = 0 "
               "AND (last_checkin_ts IS NULL OR "
-              "last_checkin_ts < datetime('now', ? || ' days')) "
+              "julianday('now') - julianday(last_checkin_ts) >= COALESCE(checkin_interval_days, 7)) "
               "ORDER BY last_checkin_ts ASC LIMIT 5");
-    q.addBindValue(QString("-%1").arg(daysSince));
     if (q.exec()) {
         while (q.next()) {
-            GoalRecord g;
-            g.id = q.value(0).toLongLong();
-            g.title = q.value(1).toString();
-            g.description = q.value(2).toString();
-            g.status = q.value(3).toInt();
-            g.createdTs = QDateTime::fromString(q.value(4).toString(), Qt::ISODate);
-            g.lastCheckinTs = QDateTime::fromString(q.value(5).toString(), Qt::ISODate);
-            g.sourceEpisodeId = q.value(6).toLongLong();
-            g.checkinCount = q.value(7).toInt();
-            results.append(g);
+            results.append(readGoalRecord(q));
         }
     }
     return results;
@@ -1570,6 +1585,7 @@ QVariantList MemoryStore::getActiveGoalsForQml()
         map["createdTs"] = g.createdTs.toString("yyyy-MM-dd");
         map["lastCheckinTs"] = g.lastCheckinTs.isValid() ? g.lastCheckinTs.toString("yyyy-MM-dd") : "Never";
         map["checkinCount"] = g.checkinCount;
+        map["checkinIntervalDays"] = g.checkinIntervalDays;
         list.append(map);
     }
     return list;

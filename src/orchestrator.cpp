@@ -341,6 +341,11 @@ void Orchestrator::handleUserMessage(const QString &message)
 
 void Orchestrator::sendToLLM()
 {
+    // Notify coordinator that foreground chat is active (only on first call, not agent loop iterations)
+    if (!m_agentLoop.inAgentLoop) {
+        emit chatStarted();
+    }
+
     // --- Build system prompt with identity context + curiosity ---
     int systemTokens = 0;
     QString systemPrompt = buildSystemPrompt(m_pendingCuriosityDirective, systemTokens);
@@ -391,7 +396,30 @@ void Orchestrator::onLLMResponse(const QString &response)
 {
     if (!m_isProcessing) return;
 
-    qDebug() << "Orchestrator: received response, length:" << response.length();
+    qDebug() << "\n---------- ORCHESTRATOR: onLLMResponse ----------";
+    qDebug() << "Response length:" << response.length()
+             << "isEmpty:" << response.isEmpty()
+             << "trimmedEmpty:" << response.trimmed().isEmpty();
+    if (!response.isEmpty()) {
+        bool hasThinkOpen = response.contains("<think>");
+        bool hasThinkClose = response.contains("</think>");
+        qDebug() << "Has <think>:" << hasThinkOpen << "Has </think>:" << hasThinkClose;
+        if (hasThinkOpen) {
+            int thinkStart = response.indexOf("<think>");
+            int thinkEnd = response.indexOf("</think>");
+            int thinkLen = (thinkEnd > thinkStart) ? (thinkEnd - thinkStart) : (response.length() - thinkStart);
+            qDebug() << "Think block length:" << thinkLen;
+            // Show what's AFTER the think block (the actual visible content)
+            if (thinkEnd > 0) {
+                QString afterThink = response.mid(thinkEnd + 8).trimmed();
+                qDebug() << "Content after </think> (" << afterThink.length() << "chars):"
+                         << (afterThink.isEmpty() ? "(EMPTY)" : afterThink.left(300));
+            } else {
+                qDebug() << "Think block is UNCLOSED — model likely ran out of tokens";
+            }
+        }
+    }
+    qDebug() << "--------------------------------------------------";
 
     // --- Check for tool calls in the response ---
     ParsedLLMResponse parsed = LLMResponseParser::parseToolCalls(response);
@@ -524,8 +552,34 @@ void Orchestrator::finalizeAgentResponse(const QString &finalText)
         m_memoryStore->updateEpisodeInquiry(m_currentEpisodeId, m_whyEngine->lastInquiry());
     }
 
+    // --- Strip think tags before emitting to UI ---
+    QString displayText = LLMResponseParser::stripThinkTags(finalText);
+
+    qDebug() << "\n---------- ORCHESTRATOR: finalizeAgentResponse ----------";
+    qDebug() << "finalText length:" << finalText.length()
+             << "displayText length:" << displayText.length()
+             << "displayText trimmed empty:" << displayText.trimmed().isEmpty();
+    if (displayText.length() != finalText.length()) {
+        qDebug() << "Think tags stripped:" << (finalText.length() - displayText.length()) << "chars removed";
+    }
+    qDebug() << "--- DISPLAY TEXT (first 500 chars) ---";
+    qDebug().noquote() << (displayText.isEmpty() ? "(EMPTY)" : displayText.left(500));
+    qDebug() << "------------------------------------------------------";
+
+    if (displayText.trimmed().isEmpty()) {
+        if (!finalText.trimmed().isEmpty()) {
+            // Model only produced think tags — show a fallback
+            qWarning() << "Orchestrator: response was only think tags, length:" << finalText.length();
+            displayText = "(DATAFORM is thinking but produced no visible response. Try again.)";
+        } else {
+            // Response was genuinely empty
+            qWarning() << "Orchestrator: received completely empty response from LLM";
+            displayText = "(No response received from the model. Check your Ollama connection and model.)";
+        }
+    }
+
     // --- Emit response to UI ---
-    emit assistantResponseReady(finalText);
+    emit assistantResponseReady(displayText);
 
     // --- Reset agent loop state ---
     resetAgentLoop();
@@ -533,6 +587,7 @@ void Orchestrator::finalizeAgentResponse(const QString &finalText)
     m_isProcessing = false;
     emit isProcessingChanged();
     emit processingFinished();
+    emit chatFinished();
 
     // --- Trigger trait extraction for high-signal events only ---
     if (m_pendingInquiryExtraction && m_traitExtractor
@@ -615,6 +670,7 @@ void Orchestrator::onLLMError(const QString &error)
     m_isProcessing = false;
     emit isProcessingChanged();
     emit processingFinished();
+    emit chatFinished();
 }
 
 void Orchestrator::submitFeedback(int feedback)

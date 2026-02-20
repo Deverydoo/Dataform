@@ -169,6 +169,10 @@ private:
     bool m_backgroundBusy = false;
     QString m_pendingLocalTag;  // For local (ORT) provider background routing
 
+    // Foreground priority: abort in-flight background when chat arrives
+    QNetworkReply *m_pendingBackgroundReply = nullptr;
+    bool m_foregroundActive = false;
+
     // Teacher request state (distillation — always uses external provider)
     bool m_teacherBusy = false;
     QString m_activeTeacherOwner;

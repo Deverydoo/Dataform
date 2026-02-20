@@ -493,7 +493,12 @@ Rectangle {
 
         function onAssistantResponseReady(response) {
             if (chatRoot.isStreaming) {
-                // Streaming already populated the message - just finalize
+                // Streaming populated the message — replace with clean final response
+                // (strips think tags, tool calls, etc. that were visible during streaming)
+                var lastIdx = messageModel.count - 1
+                if (lastIdx >= 0) {
+                    messageModel.setProperty(lastIdx, "content", response)
+                }
                 chatRoot.isStreaming = false
             } else {
                 removeProcessingMessage()

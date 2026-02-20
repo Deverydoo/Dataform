@@ -65,6 +65,7 @@ struct GoalRecord {
     QDateTime lastCheckinTs;
     qint64 sourceEpisodeId = -1;
     int checkinCount = 0;
+    int checkinIntervalDays = 7;  // LLM-estimated: 1=daily habit, 7=weekly, 30=monthly, 90=seasonal
 };
 
 struct SentimentRecord {
@@ -197,11 +198,12 @@ public:
     Q_INVOKABLE QVariantList getPendingRemindersForQml();
 
     // --- Goals CRUD ---
-    qint64 insertGoal(const QString &title, const QString &description = QString(), qint64 episodeId = -1);
+    qint64 insertGoal(const QString &title, const QString &description = QString(),
+                      qint64 episodeId = -1, int checkinIntervalDays = 7);
     QList<GoalRecord> getActiveGoals() const;
     bool updateGoalStatus(qint64 id, int status);
     bool updateGoalCheckin(qint64 id);
-    QList<GoalRecord> getGoalsNeedingCheckin(int daysSince = 7) const;
+    QList<GoalRecord> getGoalsNeedingCheckin() const;
     Q_INVOKABLE QVariantList getActiveGoalsForQml();
 
     // --- Sentiment CRUD ---

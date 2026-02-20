@@ -49,6 +49,9 @@ public:
     // Pause current research (safe mid-cycle stop)
     void pauseResearch();
 
+    bool canStartCycle() const;
+    void requestStart();
+
 public slots:
     void onIdleWindowOpened();
     void onIdleWindowClosed();
@@ -61,6 +64,7 @@ signals:
     void topicQueueChanged();
     void researchCycleComplete(const QString &topic, int findingsCount);
     void researchError(const QString &error);
+    void cycleFinished();
 
 private slots:
     void onSearchResultsReady(const QList<SearchResult> &results);
@@ -95,7 +99,6 @@ private:
     void phaseStore();
 
     // Helpers
-    bool canStartCycle() const;
     void resetDailyCounterIfNeeded();
     void buildTopicQueue();
 

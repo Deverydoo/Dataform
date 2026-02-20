@@ -49,6 +49,8 @@ public:
     QString statusMessage() const { return m_statusMessage; }
 
     Q_INVOKABLE void distillNow();
+    bool canStartCycle() const;
+    void requestStart();
 
 public slots:
     void onIdleWindowOpened();
@@ -63,6 +65,7 @@ signals:
     void statusMessageChanged();
     void distillationPairStored(qint64 pairId);
     void graduationEvalComplete(double score);
+    void cycleFinished();
 
 private slots:
     void onTeacherResponse(const QString &owner, const QString &response);
@@ -103,7 +106,6 @@ private:
 
     // Helpers
     QString buildIdentityContext() const;
-    bool canStartCycle() const;
     void resetDailyCounterIfNeeded();
     void setPhase(Phase phase);
     void setStatus(const QString &status);

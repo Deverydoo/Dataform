@@ -93,6 +93,8 @@ set(DATAFORM_CORE_SOURCES
     src/llmresponseparser.cpp
     src/toolregistry.h
     src/toolregistry.cpp
+    src/idlejobcoordinator.h
+    src/idlejobcoordinator.cpp
     src/threadsafeprogress.h
     src/sessionguard.h
 )

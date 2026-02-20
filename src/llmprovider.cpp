@@ -231,6 +231,7 @@ void LLMProviderManager::sendBackgroundPrompt(const QString &owner, const QStrin
 void LLMProviderManager::processNextBackgroundRequest()
 {
     if (m_backgroundQueue.isEmpty()) return;
+    if (m_foregroundActive) return;  // Wait for foreground chat to complete
 
     BackgroundRequest req = m_backgroundQueue.dequeue();
     m_backgroundBusy = true;
@@ -273,6 +274,19 @@ void LLMProviderManager::sendConversation(const QString &systemPrompt,
     qDebug() << "Sending conversation to" << m_currentProvider
              << "model:" << m_currentModel
              << "messages:" << messages.size();
+
+    // Foreground priority: abort any in-flight background HTTP request
+    // so the chat response isn't blocked behind a background task on the same server
+    bool isForeground = requestTag.isEmpty();
+    if (isForeground && m_currentProvider != "Local") {
+        m_foregroundActive = true;
+        if (m_pendingBackgroundReply) {
+            qDebug() << "LLM: aborting background request from" << m_activeBackgroundOwner
+                     << "to prioritize foreground chat";
+            m_pendingBackgroundReply->abort();
+            m_pendingBackgroundReply = nullptr;
+        }
+    }
 
     if (m_currentProvider == "Local") {
 #ifdef DATAFORM_TRAINING_ENABLED
@@ -349,21 +363,15 @@ void LLMProviderManager::sendConversation(const QString &systemPrompt,
         request.setUrl(QUrl(baseUrl + "/api/chat"));
         jsonBody["model"] = m_currentModel;
 
-        // For background requests with reasoning models (Qwen3+), suppress <think> blocks
-        // by appending /no_think to the last user message. This prevents the model from
-        // consuming the entire token budget on internal reasoning instead of producing output.
-        QJsonArray messagesToSend = formattedFull;
-        if (!requestTag.isEmpty() && m_currentModel.contains("qwen", Qt::CaseInsensitive)) {
-            for (int i = messagesToSend.size() - 1; i >= 0; --i) {
-                QJsonObject msg = messagesToSend[i].toObject();
-                if (msg["role"].toString() == "user") {
-                    msg["content"] = msg["content"].toString() + "\n/no_think";
-                    messagesToSend[i] = msg;
-                    break;
-                }
-            }
+        // Disable structured thinking for reasoning models (Qwen3+).
+        // These models use Ollama's "thinking" JSON field (not inline <think> tags),
+        // and will burn the entire num_predict budget on reasoning with zero visible
+        // content. The "think": false API parameter disables this at the Ollama level.
+        if (m_currentModel.contains("qwen3", Qt::CaseInsensitive)
+            || m_currentModel.contains("deepseek", Qt::CaseInsensitive)) {
+            jsonBody["think"] = false;
         }
-        jsonBody["messages"] = messagesToSend;
+        jsonBody["messages"] = formattedFull;
         jsonBody["stream"] = false;
         // Cap response length and penalize repetition
         QJsonObject options;
@@ -398,10 +406,48 @@ void LLMProviderManager::sendConversation(const QString &systemPrompt,
     request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
 
     QJsonDocument doc(jsonBody);
-    QNetworkReply *reply = m_networkManager->post(request, doc.toJson());
+    QByteArray payload = doc.toJson();
+
+    // --- Detailed request logging ---
+    if (isForeground) {
+        qDebug() << "\n========== LLM REQUEST (CHAT) ==========";
+        qDebug() << "Provider:" << m_currentProvider << "Model:" << m_currentModel;
+        qDebug() << "URL:" << request.url().toString();
+
+        // Log system prompt separately for readability
+        if (!systemPrompt.isEmpty()) {
+            qDebug() << "--- SYSTEM PROMPT (" << systemPrompt.length() << "chars) ---";
+            qDebug().noquote() << systemPrompt;
+            qDebug() << "--- END SYSTEM PROMPT ---";
+        }
+
+        // Log each message in the conversation
+        qDebug() << "--- MESSAGES (" << messages.size() << "total) ---";
+        for (int i = 0; i < messages.size(); ++i) {
+            QJsonObject m = messages[i].toObject();
+            QString role = m["role"].toString();
+            QString content = m["content"].toString();
+            qDebug().noquote() << QStringLiteral("[%1] %2: %3")
+                .arg(i).arg(role, content.length() > 500 ? content.left(500) + "..." : content);
+        }
+        qDebug() << "--- END MESSAGES ---";
+
+        // Log Ollama options
+        if (jsonBody.contains("options")) {
+            qDebug() << "Options:" << QJsonDocument(jsonBody["options"].toObject()).toJson(QJsonDocument::Compact);
+        }
+        qDebug() << "Total payload bytes:" << payload.size();
+        qDebug() << "========================================\n";
+    }
+
+    QNetworkReply *reply = m_networkManager->post(request, payload);
     reply->setProperty("requestType", "prompt");
     if (!requestTag.isEmpty()) {
         reply->setProperty("backgroundTag", requestTag);
+        // Track in-flight background reply for potential foreground preemption
+        if (!requestTag.startsWith("TEACHER:")) {
+            m_pendingBackgroundReply = reply;
+        }
     }
 }
 
@@ -477,6 +523,11 @@ void LLMProviderManager::onPromptReply(QNetworkReply *reply)
 {
     if (!reply) return;
 
+    // Clear background reply tracking
+    if (reply == m_pendingBackgroundReply) {
+        m_pendingBackgroundReply = nullptr;
+    }
+
     QString bgTag = reply->property("backgroundTag").toString();
 
     if (reply->error() == QNetworkReply::NoError) {
@@ -493,7 +544,16 @@ void LLMProviderManager::onPromptReply(QNetworkReply *reply)
             }
         } else if (m_currentProvider == "Ollama") {
             if (obj.contains("message")) {
-                responseText = obj["message"].toObject()["content"].toString();
+                QJsonObject msgObj = obj["message"].toObject();
+                responseText = msgObj["content"].toString();
+                // Safety net: if content is empty but structured thinking field exists,
+                // the model used Ollama's thinking mode and burned all tokens on reasoning.
+                if (responseText.isEmpty() && msgObj.contains("thinking")) {
+                    QString thinking = msgObj["thinking"].toString();
+                    qWarning() << "LLM: Ollama response has empty content but"
+                               << thinking.length() << "chars in 'thinking' field"
+                               << "— model burned all tokens on reasoning. Consider think:false.";
+                }
             } else {
                 responseText = obj["response"].toString();
             }
@@ -504,10 +564,37 @@ void LLMProviderManager::onPromptReply(QNetworkReply *reply)
             }
         }
 
+        // --- Detailed response logging for chat requests ---
+        if (bgTag.isEmpty()) {
+            qDebug() << "\n========== LLM RESPONSE (CHAT) ==========";
+            qDebug() << "Provider:" << m_currentProvider << "Model:" << m_currentModel;
+            qDebug() << "Raw response bytes:" << responseData.size();
+            qDebug() << "JSON keys:" << obj.keys();
+
+            // Log Ollama-specific metadata
+            if (m_currentProvider == "Ollama") {
+                qDebug() << "done:" << obj["done"].toBool()
+                         << "done_reason:" << obj["done_reason"].toString();
+                qDebug() << "total_duration:" << obj["total_duration"].toDouble() / 1e9 << "s"
+                         << "eval_count:" << obj["eval_count"].toInt()
+                         << "eval_duration:" << obj["eval_duration"].toDouble() / 1e9 << "s"
+                         << "prompt_eval_count:" << obj["prompt_eval_count"].toInt()
+                         << "prompt_eval_duration:" << obj["prompt_eval_duration"].toDouble() / 1e9 << "s";
+            }
+
+            qDebug() << "Parsed response length:" << responseText.length();
+            qDebug() << "--- FULL RESPONSE TEXT ---";
+            qDebug().noquote() << responseText;
+            qDebug() << "--- END RESPONSE TEXT ---";
+            qDebug() << "==========================================\n";
+        }
+
         // Diagnostic: if response is empty, log raw data for debugging
-        if (responseText.isEmpty() && !bgTag.isEmpty()) {
-            qWarning() << "LLM: EMPTY response for background" << bgTag
+        if (responseText.isEmpty()) {
+            qWarning() << "LLM: EMPTY response"
+                       << (bgTag.isEmpty() ? "for chat" : QStringLiteral("for background %1").arg(bgTag))
                        << "provider:" << m_currentProvider
+                       << "model:" << m_currentModel
                        << "raw bytes:" << responseData.size()
                        << "raw data:" << responseData.left(500);
             qWarning() << "LLM: JSON keys:" << obj.keys()
@@ -515,7 +602,7 @@ void LLMProviderManager::onPromptReply(QNetworkReply *reply)
                        << "has 'error':" << obj.contains("error");
             if (obj.contains("error")) {
                 responseText = QString("OLLAMA_ERROR: %1").arg(obj["error"].toString());
-            } else if (responseData.size() > 0) {
+            } else if (responseData.size() > 0 && !bgTag.isEmpty()) {
                 responseText = QString("RAW_PARSE_FAIL(%1 bytes): %2")
                                    .arg(responseData.size())
                                    .arg(QString::fromUtf8(responseData.left(500)));
@@ -540,10 +627,26 @@ void LLMProviderManager::onPromptReply(QNetworkReply *reply)
             }
             qDebug() << "Background response for" << bgTag << ":" << responseText.left(80) << "...";
         } else {
+            // Foreground response — clear priority flag so background can resume
+            m_foregroundActive = false;
             emit responseReceived(responseText);
             qDebug() << "Response received:" << responseText.left(100) << "...";
         }
     } else {
+        // Check for foreground-preemption abort of a background request
+        if (reply->error() == QNetworkReply::OperationCanceledError
+            && !bgTag.isEmpty() && !bgTag.startsWith("TEACHER:")) {
+            qDebug() << "LLM: background request from" << bgTag
+                     << "aborted for foreground priority";
+            m_backgroundBusy = false;
+            m_activeBackgroundOwner.clear();
+            // Emit error so the engine can transition to Idle and emit cycleFinished.
+            // The coordinator will reschedule it after the chat completes.
+            emit backgroundErrorOccurred(bgTag, "Preempted by foreground chat");
+            // Don't process next — foreground is active
+            return;
+        }
+
         QString errorMsg = QString("Request failed: %1").arg(reply->errorString());
         if (bgTag.startsWith("TEACHER:")) {
             QString teacherOwner = bgTag.mid(8);
@@ -559,6 +662,7 @@ void LLMProviderManager::onPromptReply(QNetworkReply *reply)
                 processNextBackgroundRequest();
             }
         } else {
+            m_foregroundActive = false;
             emit errorOccurred(errorMsg);
         }
     }

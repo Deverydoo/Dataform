@@ -88,14 +88,31 @@ void TraitExtractor::setStatus(const QString &status)
 void TraitExtractor::onIdleWindowOpened()
 {
     m_idleActive = true;
-    qDebug() << "TraitExtractor: idle window opened, starting conversation scan";
-    // Start first scan after a short delay (let other idle consumers settle)
-    QTimer::singleShot(5000, this, [this]() {
-        if (m_idleActive && !m_isExtracting) {
-            processNextConversation();
-        }
-    });
-    m_idleScanTimer.start();
+    qDebug() << "TraitExtractor: idle window opened";
+    // Auto-start removed — coordinator calls requestStart()
+}
+
+bool TraitExtractor::canStartCycle() const
+{
+    if (!m_llmProvider || !m_memoryStore) return false;
+    if (m_isExtracting) return false;
+    return true;
+}
+
+void TraitExtractor::requestStart()
+{
+    if (!canStartCycle()) {
+        emit cycleFinished();
+        return;
+    }
+    // Process one batch — cycleFinished emitted from response/error handler
+    m_idleActive = true;  // Ensure idle flag is set for priority selection
+    processNextConversation();
+    // If processNextConversation returned without starting extraction (no episodes),
+    // we need to signal done
+    if (!m_isExtracting) {
+        emit cycleFinished();
+    }
 }
 
 void TraitExtractor::onIdleWindowClosed()
@@ -425,24 +442,9 @@ void TraitExtractor::onExtractionResponse(const QString &response)
     m_currentExtractionEpisodeId = -1;
     emit isExtractingChanged();
 
-    // If idle scanning or manual scan, queue next batch
-    if (m_idleActive || !m_scannedEpisodeIds.isEmpty()) {
-        QTimer::singleShot(3000, this, [this]() {
-            if (!m_isExtracting) processNextConversation();
-        });
-    }
-
-    // Trigger lean re-analysis during idle if enough time has passed (once per hour)
-    if (!m_isAnalyzingLean && m_idleActive && !traits.isEmpty()) {
-        if (!m_lastLeanAnalysis.isValid() ||
-            m_lastLeanAnalysis.secsTo(QDateTime::currentDateTime()) > 3600) {
-            QTimer::singleShot(10000, this, [this]() {
-                if (m_idleActive && !m_isExtracting && !m_isAnalyzingLean) {
-                    analyzePoliticalLean();
-                }
-            });
-        }
-    }
+    // Single-batch mode: signal coordinator that this cycle is done
+    // Coordinator will re-activate for more batches if needed
+    emit cycleFinished();
 }
 
 void TraitExtractor::onExtractionError(const QString &error)
@@ -455,12 +457,8 @@ void TraitExtractor::onExtractionError(const QString &error)
     m_currentExtractionEpisodeId = -1;
     emit isExtractingChanged();
 
-    // Try next batch
-    if (m_idleActive || !m_scannedEpisodeIds.isEmpty()) {
-        QTimer::singleShot(5000, this, [this]() {
-            if (!m_isExtracting) processNextConversation();
-        });
-    }
+    // Signal coordinator that this cycle is done
+    emit cycleFinished();
 }
 
 // --- Prompt building ---

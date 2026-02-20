@@ -46,10 +46,13 @@ void NewsEngine::onIdleWindowOpened()
 {
     m_idleWindowOpen = true;
     m_paused = false;
+    // Auto-start removed — coordinator calls requestStart()
+}
 
-    if (canStartCycle()) {
-        startCycle();
-    }
+void NewsEngine::requestStart()
+{
+    if (canStartCycle()) startCycle();
+    else emit cycleFinished();
 }
 
 void NewsEngine::onIdleWindowClosed()
@@ -147,13 +150,7 @@ void NewsEngine::advancePhase()
         emit cyclesCompletedTodayChanged();
         qDebug() << "NewsEngine: cycle complete. Cycles today:" << m_cyclesCompletedToday;
         setPhase(Idle);
-
-        // Try another cycle if still idle
-        if (m_idleWindowOpen && canStartCycle()) {
-            QTimer::singleShot(10000, this, [this]() {
-                if (m_idleWindowOpen && canStartCycle()) startCycle();
-            });
-        }
+        // Auto-retry removed — coordinator handles scheduling
         break;
     default:
         break;
@@ -162,6 +159,7 @@ void NewsEngine::advancePhase()
 
 void NewsEngine::setPhase(Phase phase)
 {
+    Phase old = m_phase;
     m_phase = phase;
 
     static const QStringList phaseNames = {
@@ -175,6 +173,10 @@ void NewsEngine::setPhase(Phase phase)
     if (phase == Idle && m_isFetchingNews) {
         m_isFetchingNews = false;
         emit isFetchingNewsChanged();
+    }
+
+    if (phase == Idle && old != Idle) {
+        emit cycleFinished();
     }
 }
 

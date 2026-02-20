@@ -40,7 +40,13 @@ void GoalTracker::onIdleWindowOpened()
 {
     m_idleWindowOpen = true;
     m_paused = false;
+    // Auto-start removed — coordinator calls requestStart()
+}
+
+void GoalTracker::requestStart()
+{
     if (canStartCycle()) startCycle();
+    else emit cycleFinished();
 }
 
 void GoalTracker::onIdleWindowClosed()
@@ -74,7 +80,11 @@ void GoalTracker::startCycle()
 
 void GoalTracker::setPhase(Phase phase)
 {
+    Phase old = m_phase;
     m_phase = phase;
+    if (phase == Idle && old != Idle) {
+        emit cycleFinished();
+    }
 }
 
 void GoalTracker::advancePhase()
@@ -95,12 +105,7 @@ void GoalTracker::advancePhase()
         m_lastCycleEndTime = QDateTime::currentDateTime();
         setPhase(Idle);
         refreshGoalCount();
-        // Auto-retry
-        if (m_idleWindowOpen && canStartCycle()) {
-            QTimer::singleShot(10000, this, [this]() {
-                if (m_idleWindowOpen && canStartCycle()) startCycle();
-            });
-        }
+        // Auto-retry removed — coordinator handles scheduling
         break;
     default:
         m_isProcessing = false;
@@ -140,7 +145,14 @@ void GoalTracker::phaseDetectGoals()
     QString prompt = QString(
         "Identify goals or intentions in these user messages.\n\n"
         "%1\n\n"
-        "Output a JSON array. Example: [{\"title\":\"Learn Spanish\",\"description\":\"User wants to learn Spanish for travel\"}]\n"
+        "For each goal, estimate how often we should check in based on its nature:\n"
+        "- Daily habits (exercise, journaling, meditation): checkin_days = 1-2\n"
+        "- Weekly tasks (projects, learning): checkin_days = 7\n"
+        "- Growing/planting/seasonal (gardens, crops): checkin_days = 14-30\n"
+        "- Long-term aspirations (career, big projects): checkin_days = 30-90\n\n"
+        "Output a JSON array. Example:\n"
+        "[{\"title\":\"Exercise daily\",\"description\":\"Daily morning routine\",\"checkin_days\":1},\n"
+        " {\"title\":\"Grow sunchokes\",\"description\":\"Planting for harvest\",\"checkin_days\":21}]\n"
         "If no goals found, return []\n"
         "IMPORTANT: Output ONLY the JSON array starting with [ and ending with ]. No other text."
     ).arg(userMessages.join("\n---\n"));
@@ -163,7 +175,7 @@ void GoalTracker::phaseGenerateCheckin()
         return;
     }
 
-    QList<GoalRecord> staleGoals = m_memoryStore->getGoalsNeedingCheckin(CHECKIN_INTERVAL_DAYS);
+    QList<GoalRecord> staleGoals = m_memoryStore->getGoalsNeedingCheckin();
     if (staleGoals.isEmpty()) {
         advancePhase();
         return;
@@ -174,7 +186,7 @@ void GoalTracker::phaseGenerateCheckin()
     m_currentCheckinGoalId = goal.id;
     m_currentCheckinGoalTitle = goal.title;
 
-    // Calculate how long ago the goal was created
+    // Calculate time since goal was created
     qint64 daysAgo = goal.createdTs.daysTo(QDateTime::currentDateTime());
     QString timeDesc;
     if (daysAgo < 1)
@@ -188,12 +200,34 @@ void GoalTracker::phaseGenerateCheckin()
     else
         timeDesc = QString("about %1 month%2 ago").arg(daysAgo / 30).arg(daysAgo / 30 > 1 ? "s" : "");
 
+    // Timing-aware thought message based on check-in interval
+    QString content;
+    int interval = goal.checkinIntervalDays;
+    if (interval <= 2) {
+        // Daily habits — encouraging, routine tone
+        content = QString("Daily check-in: How did \"%1\" go today? "
+                          "Keeping the streak going!").arg(goal.title);
+    } else if (interval <= 7) {
+        // Weekly tasks — progress-focused
+        content = QString("You've been working on \"%1\" (started %2). "
+                          "How's this week's progress?").arg(goal.title, timeDesc);
+    } else if (interval <= 30) {
+        // Growing/planting/medium-term — patience-aware
+        content = QString("It's been a little while since we talked about \"%1\" "
+                          "(started %2). These things take time — any updates?")
+                      .arg(goal.title, timeDesc);
+    } else {
+        // Long-term aspirations — big picture
+        content = QString("Thinking about your long-term goal \"%1\" "
+                          "(started %2). Any milestones or shifts in direction?")
+                      .arg(goal.title, timeDesc);
+    }
+
     ThoughtRecord thought;
     thought.type = "goal_checkin";
     thought.title = QString("Checking in: %1").arg(goal.title);
-    thought.content = QString("You mentioned \"%1\" %2. How's that going? "
-                              "I'd love to hear about your progress.").arg(goal.title, timeDesc);
-    thought.priority = 0.75;
+    thought.content = content;
+    thought.priority = (interval <= 2) ? 0.8 : 0.75;  // Slight boost for daily habits
     thought.sourceType = "goal";
     thought.sourceId = goal.id;
     thought.generatedBy = "goal_tracker";
@@ -239,10 +273,13 @@ void GoalTracker::onLLMResponse(const QString &response)
         }
 
         if (!isDuplicate) {
-            m_memoryStore->insertGoal(title, description);
+            int checkinDays = obj.value("checkin_days").toInt(7);
+            checkinDays = qBound(1, checkinDays, 365);
+            m_memoryStore->insertGoal(title, description, -1, checkinDays);
             emit goalDetected(title);
             detected++;
-            qDebug() << "GoalTracker: detected new goal:" << title;
+            qDebug() << "GoalTracker: detected new goal:" << title
+                     << "checkin every" << checkinDays << "days";
         }
     }
 

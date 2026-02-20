@@ -3,6 +3,9 @@
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
 #include <QIcon>
+#include <QFile>
+#include <QMutex>
+#include <QDateTime>
 #include <memory>
 #include "profilemanager.h"
 #include "settingsmanager.h"
@@ -31,6 +34,7 @@
 #include "distillationmanager.h"
 #include "toolregistry.h"
 #include "backgroundjobmanager.h"
+#include "idlejobcoordinator.h"
 
 #ifdef DATAFORM_TRAINING_ENABLED
 #include "tokenizer.h"
@@ -49,9 +53,49 @@
 #include "llamacppmanager.h"
 #endif
 
+// --- Debug log file handler ---
+static QFile *g_debugLogFile = nullptr;
+static QMutex g_logMutex;
+
+void dataformMessageHandler(QtMsgType type, const QMessageLogContext &context, const QString &msg)
+{
+    Q_UNUSED(context);
+    QMutexLocker locker(&g_logMutex);
+    if (!g_debugLogFile || !g_debugLogFile->isOpen()) return;
+
+    const char *level = "DBG";
+    switch (type) {
+    case QtDebugMsg:    level = "DBG"; break;
+    case QtInfoMsg:     level = "INF"; break;
+    case QtWarningMsg:  level = "WRN"; break;
+    case QtCriticalMsg: level = "CRT"; break;
+    case QtFatalMsg:    level = "FTL"; break;
+    }
+
+    QString line = QStringLiteral("%1 [%2] %3\n")
+        .arg(QDateTime::currentDateTime().toString("HH:mm:ss.zzz"), level, msg);
+    g_debugLogFile->write(line.toUtf8());
+    g_debugLogFile->flush();
+
+    // Also write to stderr so console still works
+    fprintf(stderr, "%s", line.toUtf8().constData());
+}
+
 int main(int argc, char *argv[])
 {
     QApplication app(argc, argv);
+
+    // --- Install file-based debug logger ---
+    QString logPath = QCoreApplication::applicationDirPath() + "/dataform_debug.log";
+    g_debugLogFile = new QFile(logPath);
+    if (g_debugLogFile->open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+        qInstallMessageHandler(dataformMessageHandler);
+        qDebug() << "=== DATAFORM debug log started ===" << QDateTime::currentDateTime().toString();
+    } else {
+        delete g_debugLogFile;
+        g_debugLogFile = nullptr;
+        fprintf(stderr, "Warning: Could not open debug log at %s\n", logPath.toUtf8().constData());
+    }
 
     QCoreApplication::setOrganizationName("GHI");
     QCoreApplication::setOrganizationDomain("globalhumaninitiative.org");
@@ -124,6 +168,9 @@ int main(int argc, char *argv[])
 
     // 19. Tool Registry (Agentic Tool System)
     ToolRegistry toolRegistry;
+
+    // 20. Idle Job Coordinator — serializes engine activation (one at a time)
+    IdleJobCoordinator idleJobCoordinator;
 
 #ifdef DATAFORM_TRAINING_ENABLED
     // 12. Tokenizer for ORT training (Phase 2)
@@ -537,76 +584,119 @@ int main(int argc, char *argv[])
     idleScheduler.setComputeBudgetPercent(settingsManager.computeBudgetPercent());
     idleScheduler.setEnabled(settingsManager.idleLearningEnabled());
 
-    // Connect idle scheduler to lifecycle sweep (Phase 4)
+    // === Idle Job Coordinator: serializes engine activation (one at a time) ===
+
+    // Register engines in priority order (lower = runs first)
+    idleJobCoordinator.registerEngine("TraitExtractor", 0,
+        [&]() { return traitExtractor.canStartCycle(); },
+        [&]() { traitExtractor.requestStart(); });
+    idleJobCoordinator.registerEngine("ResearchEngine", 1,
+        [&]() { return researchEngine.canStartCycle(); },
+        [&]() { researchEngine.requestStart(); });
+    idleJobCoordinator.registerEngine("GoalTracker", 2,
+        [&]() { return goalTracker.canStartCycle(); },
+        [&]() { goalTracker.requestStart(); });
+    idleJobCoordinator.registerEngine("NewsEngine", 2,
+        [&]() { return newsEngine.canStartCycle(); },
+        [&]() { newsEngine.requestStart(); });
+    idleJobCoordinator.registerEngine("LearningEngine", 2,
+        [&]() { return learningEngine.canStartCycle(); },
+        [&]() { learningEngine.requestStart(); });
+    idleJobCoordinator.registerEngine("EmbeddingManager", 3,
+        [&]() { return embeddingManager.canStartCycle(); },
+        [&]() { embeddingManager.requestStart(); });
+    idleJobCoordinator.registerEngine("DistillationManager", 3,
+        [&]() { return distillationManager.canStartCycle(); },
+        [&]() { distillationManager.requestStart(); });
+
+    // Connect idle scheduler to coordinator (NOT directly to engines)
+    QObject::connect(&idleScheduler, &IdleScheduler::idleWindowOpened,
+                     &idleJobCoordinator, &IdleJobCoordinator::onIdleWindowOpened);
+    QObject::connect(&idleScheduler, &IdleScheduler::idleWindowClosed,
+                     &idleJobCoordinator, &IdleJobCoordinator::onIdleWindowClosed);
+
+    // Connect engine cycleFinished signals to coordinator
+    QObject::connect(&traitExtractor, &TraitExtractor::cycleFinished,
+                     &idleJobCoordinator, [&]() { idleJobCoordinator.onEngineCycleFinished("TraitExtractor"); });
+    QObject::connect(&researchEngine, &ResearchEngine::cycleFinished,
+                     &idleJobCoordinator, [&]() { idleJobCoordinator.onEngineCycleFinished("ResearchEngine"); });
+    QObject::connect(&goalTracker, &GoalTracker::cycleFinished,
+                     &idleJobCoordinator, [&]() { idleJobCoordinator.onEngineCycleFinished("GoalTracker"); });
+    QObject::connect(&newsEngine, &NewsEngine::cycleFinished,
+                     &idleJobCoordinator, [&]() { idleJobCoordinator.onEngineCycleFinished("NewsEngine"); });
+    QObject::connect(&learningEngine, &LearningEngine::cycleFinished,
+                     &idleJobCoordinator, [&]() { idleJobCoordinator.onEngineCycleFinished("LearningEngine"); });
+    QObject::connect(&embeddingManager, &EmbeddingManager::cycleFinished,
+                     &idleJobCoordinator, [&]() { idleJobCoordinator.onEngineCycleFinished("EmbeddingManager"); });
+    QObject::connect(&distillationManager, &DistillationManager::cycleFinished,
+                     &idleJobCoordinator, [&]() { idleJobCoordinator.onEngineCycleFinished("DistillationManager"); });
+
+    // Connect foreground chat signals to coordinator (pause engines during chat)
+    QObject::connect(&orchestrator, &Orchestrator::chatStarted,
+                     &idleJobCoordinator, &IdleJobCoordinator::onForegroundBusy);
+    QObject::connect(&orchestrator, &Orchestrator::chatFinished,
+                     &idleJobCoordinator, &IdleJobCoordinator::onForegroundIdle);
+
+    // === Direct connections for local-only operations (no LLM, no coordinator) ===
+
+    // DataLifecycleManager: local-only DB maintenance
     QObject::connect(&idleScheduler, &IdleScheduler::idleWindowOpened,
                      &dataLifecycleManager, &DataLifecycleManager::runLifecycleSweep);
 
-    // Connect idle scheduler to research engine (Phase 5)
-    QObject::connect(&idleScheduler, &IdleScheduler::idleWindowOpened,
-                     &researchEngine, &ResearchEngine::onIdleWindowOpened);
-    QObject::connect(&idleScheduler, &IdleScheduler::idleWindowClosed,
-                     &researchEngine, &ResearchEngine::onIdleWindowClosed);
-
-    // Connect idle scheduler to ThoughtEngine (Proactive Dialog)
+    // ThoughtEngine: local-only thought generation during idle
     QObject::connect(&idleScheduler, &IdleScheduler::idleWindowOpened,
                      &thoughtEngine, &ThoughtEngine::onIdleWindowOpened);
     QObject::connect(&idleScheduler, &IdleScheduler::idleWindowClosed,
                      &thoughtEngine, &ThoughtEngine::onIdleWindowClosed);
 
-    // Connect research events to ThoughtEngine
-    QObject::connect(&researchEngine, &ResearchEngine::researchCycleComplete,
-                     &thoughtEngine, &ThoughtEngine::onResearchCycleComplete);
-
-    // Connect idle scheduler to NewsEngine
-    QObject::connect(&idleScheduler, &IdleScheduler::idleWindowOpened,
-                     &newsEngine, &NewsEngine::onIdleWindowOpened);
-    QObject::connect(&idleScheduler, &IdleScheduler::idleWindowClosed,
-                     &newsEngine, &NewsEngine::onIdleWindowClosed);
-
-    // Connect news events to ThoughtEngine
-    QObject::connect(&newsEngine, &NewsEngine::newsCycleComplete,
-                     &thoughtEngine, &ThoughtEngine::onNewsCycleComplete);
-
-    // Start ReminderEngine polling timer
-    reminderEngine.start();
-
-    // Connect idle scheduler to GoalTracker
-    QObject::connect(&idleScheduler, &IdleScheduler::idleWindowOpened,
-                     &goalTracker, &GoalTracker::onIdleWindowOpened);
-    QObject::connect(&idleScheduler, &IdleScheduler::idleWindowClosed,
-                     &goalTracker, &GoalTracker::onIdleWindowClosed);
-
-    // Connect idle scheduler to TraitExtractor (conversation scanning)
-    QObject::connect(&idleScheduler, &IdleScheduler::idleWindowOpened,
-                     &traitExtractor, &TraitExtractor::onIdleWindowOpened);
-    QObject::connect(&idleScheduler, &IdleScheduler::idleWindowClosed,
-                     &traitExtractor, &TraitExtractor::onIdleWindowClosed);
-
-    // Connect episode storage to SentimentTracker
+    // SentimentTracker: event-driven (per episode), idle handler is local-only mood calc
     QObject::connect(&orchestrator, &Orchestrator::episodeStored,
                      &sentimentTracker, &SentimentTracker::onEpisodeStored);
     QObject::connect(&idleScheduler, &IdleScheduler::idleWindowOpened,
                      &sentimentTracker, &SentimentTracker::onIdleWindowOpened);
 
-    // Connect idle scheduler to LearningEngine
+    // EmbeddingManager: episode insertion (queue for next idle batch)
+    QObject::connect(&orchestrator, &Orchestrator::episodeStored,
+                     &embeddingManager, &EmbeddingManager::onEpisodeInserted);
+
+    // Connect research/news events to ThoughtEngine
+    QObject::connect(&researchEngine, &ResearchEngine::researchCycleComplete,
+                     &thoughtEngine, &ThoughtEngine::onResearchCycleComplete);
+    QObject::connect(&newsEngine, &NewsEngine::newsCycleComplete,
+                     &thoughtEngine, &ThoughtEngine::onNewsCycleComplete);
+
+    // Engine idle state tracking (onIdleWindowOpened/Closed for m_idleWindowOpen flag only — no auto-start)
+    QObject::connect(&idleScheduler, &IdleScheduler::idleWindowOpened,
+                     &researchEngine, &ResearchEngine::onIdleWindowOpened);
+    QObject::connect(&idleScheduler, &IdleScheduler::idleWindowClosed,
+                     &researchEngine, &ResearchEngine::onIdleWindowClosed);
+    QObject::connect(&idleScheduler, &IdleScheduler::idleWindowOpened,
+                     &newsEngine, &NewsEngine::onIdleWindowOpened);
+    QObject::connect(&idleScheduler, &IdleScheduler::idleWindowClosed,
+                     &newsEngine, &NewsEngine::onIdleWindowClosed);
+    QObject::connect(&idleScheduler, &IdleScheduler::idleWindowOpened,
+                     &goalTracker, &GoalTracker::onIdleWindowOpened);
+    QObject::connect(&idleScheduler, &IdleScheduler::idleWindowClosed,
+                     &goalTracker, &GoalTracker::onIdleWindowClosed);
+    QObject::connect(&idleScheduler, &IdleScheduler::idleWindowOpened,
+                     &traitExtractor, &TraitExtractor::onIdleWindowOpened);
+    QObject::connect(&idleScheduler, &IdleScheduler::idleWindowClosed,
+                     &traitExtractor, &TraitExtractor::onIdleWindowClosed);
     QObject::connect(&idleScheduler, &IdleScheduler::idleWindowOpened,
                      &learningEngine, &LearningEngine::onIdleWindowOpened);
     QObject::connect(&idleScheduler, &IdleScheduler::idleWindowClosed,
                      &learningEngine, &LearningEngine::onIdleWindowClosed);
-
-    // Connect idle scheduler to EmbeddingManager (Phase 7: lowest priority)
     QObject::connect(&idleScheduler, &IdleScheduler::idleWindowOpened,
                      &embeddingManager, &EmbeddingManager::onIdleWindowOpened);
     QObject::connect(&idleScheduler, &IdleScheduler::idleWindowClosed,
                      &embeddingManager, &EmbeddingManager::onIdleWindowClosed);
-    QObject::connect(&orchestrator, &Orchestrator::episodeStored,
-                     &embeddingManager, &EmbeddingManager::onEpisodeInserted);
-
-    // Connect idle scheduler to DistillationManager (Phase 8)
     QObject::connect(&idleScheduler, &IdleScheduler::idleWindowOpened,
                      &distillationManager, &DistillationManager::onIdleWindowOpened);
     QObject::connect(&idleScheduler, &IdleScheduler::idleWindowClosed,
                      &distillationManager, &DistillationManager::onIdleWindowClosed);
+
+    // Start ReminderEngine polling timer
+    reminderEngine.start();
 
 #ifdef DATAFORM_TRAINING_ENABLED
     // Connect training events to ThoughtEngine
@@ -680,6 +770,7 @@ int main(int argc, char *argv[])
     engine.rootContext()->setContextProperty("embeddingManager", &embeddingManager);
     engine.rootContext()->setContextProperty("distillationManager", &distillationManager);
     engine.rootContext()->setContextProperty("toolRegistry", &toolRegistry);
+    engine.rootContext()->setContextProperty("idleJobCoordinator", &idleJobCoordinator);
     engine.rootContext()->setContextProperty("jobManager", BackgroundJobManager::instance());
 
 #ifdef DATAFORM_TRAINING_ENABLED

@@ -65,6 +65,9 @@ public:
     // Check model availability (async)
     void checkModelAvailability();
 
+    bool canStartCycle() const;
+    void requestStart();
+
 public slots:
     void onIdleWindowOpened();
     void onIdleWindowClosed();
@@ -79,6 +82,7 @@ signals:
     void embeddingError(const QString &requestTag, const QString &error);
     void batchEmbeddingComplete(int count);
     void semanticSearchComplete(QList<SemanticSearchResult> results);
+    void cycleFinished();
 
 private slots:
     void onNetworkReply(QNetworkReply *reply);

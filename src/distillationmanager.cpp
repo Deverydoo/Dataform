@@ -75,20 +75,16 @@ void DistillationManager::onIdleWindowOpened()
 {
     m_idleWindowOpen = true;
     m_pairsThisSession = 0;
+    // Auto-start removed — coordinator calls requestStart()
+}
 
-    if (!m_settingsManager || !m_settingsManager->distillationEnabled()) {
-        qDebug() << "DistillationManager: distillation disabled in settings";
-        return;
-    }
-
+void DistillationManager::requestStart()
+{
     if (!canStartCycle()) {
-        qDebug() << "DistillationManager: cannot start cycle (daily limit or cooldown)";
+        emit cycleFinished();
         return;
     }
-
-    // Delay first cycle slightly to let other idle engines start
-    m_cycleTimer.start(5000);
-    setStatus("Waiting to start distillation...");
+    startCycle();
 }
 
 void DistillationManager::onIdleWindowClosed()
@@ -522,18 +518,15 @@ void DistillationManager::finishCycleAndScheduleNext()
 {
     m_lastCycleEndTime = QDateTime::currentDateTime();
 
-    if (m_idleWindowOpen && canStartCycle()) {
-        setStatus("Cooling down before next pair...");
-        m_cycleTimer.start(CYCLE_COOLDOWN_SEC * 1000);
-    } else {
-        setPhase(Idle);
-        if (m_pairsThisSession >= MAX_PAIRS_PER_SESSION)
-            setStatus(QString("Session complete — %1 pairs collected").arg(m_pairsThisSession));
-        else
-            setStatus("Distillation idle");
-        m_isDistilling = false;
-        emit isDistillingChanged();
-    }
+    setPhase(Idle);
+    if (m_pairsThisSession >= MAX_PAIRS_PER_SESSION)
+        setStatus(QString("Session complete — %1 pairs collected").arg(m_pairsThisSession));
+    else
+        setStatus("Distillation idle");
+    m_isDistilling = false;
+    emit isDistillingChanged();
+    // Auto-retry removed — coordinator handles scheduling
+    emit cycleFinished();
 }
 
 // --- Graduation Evaluation ---

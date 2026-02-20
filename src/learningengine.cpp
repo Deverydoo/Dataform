@@ -42,15 +42,22 @@ void LearningEngine::onIdleWindowOpened()
 {
     m_idleWindowOpen = true;
     m_paused = false;
+    // Auto-start removed — coordinator calls requestStart()
+}
 
-    // During idle, check if there's an active plan needing a lesson thought
+void LearningEngine::requestStart()
+{
     if (canStartCycle()) {
         refreshState();
         if (m_hasActivePlan && m_currentPlanId > 0) {
             m_isProcessing = true;
             setPhase(GenerateThought);
             phaseGenerateThought();
+        } else {
+            emit cycleFinished();
         }
+    } else {
+        emit cycleFinished();
     }
 }
 
@@ -95,7 +102,11 @@ QVariantList LearningEngine::getActivePlansForQml()
 
 void LearningEngine::setPhase(Phase phase)
 {
+    Phase old = m_phase;
     m_phase = phase;
+    if (phase == Idle && old != Idle) {
+        emit cycleFinished();
+    }
 }
 
 void LearningEngine::advancePhase()

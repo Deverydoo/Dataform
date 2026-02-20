@@ -27,6 +27,8 @@ public:
     void setSettingsManager(SettingsManager *settings);
 
     int activeGoalCount() const { return m_activeGoalCount; }
+    bool canStartCycle() const;
+    void requestStart();
 
 public slots:
     void onIdleWindowOpened();
@@ -36,6 +38,7 @@ signals:
     void activeGoalCountChanged();
     void goalDetected(const QString &title);
     void checkinGenerated(qint64 goalId);
+    void cycleFinished();
 
 private slots:
     void onLLMResponse(const QString &response);
@@ -45,7 +48,6 @@ private:
     enum Phase { Idle, DetectGoals, GenerateCheckin };
 
     void startCycle();
-    bool canStartCycle() const;
     void advancePhase();
     void setPhase(Phase phase);
 
@@ -71,7 +73,6 @@ private:
 
     QDateTime m_lastCycleEndTime;
     static constexpr int CYCLE_COOLDOWN_SEC = 1800;
-    static constexpr int CHECKIN_INTERVAL_DAYS = 7;
 
     // Error recovery
     int m_consecutiveErrors = 0;

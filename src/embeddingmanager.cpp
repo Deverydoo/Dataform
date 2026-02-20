@@ -169,9 +169,30 @@ void EmbeddingManager::onIdleWindowOpened()
 {
     m_idleWindowOpen = true;
     m_consecutiveErrors = 0;
+    // Auto-start removed — coordinator calls requestStart()
+}
 
-    if (!m_isEmbedding && m_modelAvailable) {
-        startBatchEmbedding();
+bool EmbeddingManager::canStartCycle() const
+{
+    if (!m_modelAvailable || m_isEmbedding) return false;
+    if (!m_memoryStore) return false;
+    if (m_lastCycleEndTime.isValid()
+        && m_lastCycleEndTime.secsTo(QDateTime::currentDateTime()) < CYCLE_COOLDOWN_SEC) {
+        return false;
+    }
+    return true;
+}
+
+void EmbeddingManager::requestStart()
+{
+    if (!canStartCycle()) {
+        emit cycleFinished();
+        return;
+    }
+    startBatchEmbedding();
+    // If nothing to embed, startBatchEmbedding returns without setting m_isEmbedding
+    if (!m_isEmbedding) {
+        emit cycleFinished();
     }
 }
 
@@ -225,6 +246,7 @@ void EmbeddingManager::onNetworkReply(QNetworkReply *reply)
             emit isEmbeddingChanged();
             m_status = QString("Paused (%1 errors)").arg(m_consecutiveErrors);
             emit statusChanged();
+            emit cycleFinished();
         }
         return;
     }
@@ -395,6 +417,7 @@ void EmbeddingManager::processNextBatchItem()
             m_status = QString("Cycle complete (%1 total)").arg(total);
             emit statusChanged();
             emit batchEmbeddingComplete(total);
+            emit cycleFinished();
         }
         return;
     }

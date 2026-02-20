@@ -107,6 +107,10 @@ signals:
     // Episode storage signal (for SentimentTracker)
     void episodeStored(qint64 episodeId);
 
+    // Foreground chat state (for IdleJobCoordinator)
+    void chatStarted();
+    void chatFinished();
+
 private slots:
     void onLLMResponse(const QString &response);
     void onLLMError(const QString &error);
