@@ -367,15 +367,17 @@ void LLMProviderManager::sendConversation(const QString &systemPrompt,
         // These models use Ollama's "thinking" JSON field (not inline <think> tags),
         // and will burn the entire num_predict budget on reasoning with zero visible
         // content. The "think": false API parameter disables this at the Ollama level.
-        if (m_currentModel.contains("qwen3", Qt::CaseInsensitive)
-            || m_currentModel.contains("deepseek", Qt::CaseInsensitive)) {
+        bool isThinkingModel = m_currentModel.contains("qwen3", Qt::CaseInsensitive)
+                            || m_currentModel.contains("deepseek", Qt::CaseInsensitive);
+        if (isThinkingModel) {
             jsonBody["think"] = false;
         }
         jsonBody["messages"] = formattedFull;
         jsonBody["stream"] = false;
-        // Cap response length and penalize repetition
+        // Let Ollama use its own num_predict default (driven by the user's
+        // Ollama configuration / num_ctx). We do NOT override num_predict here
+        // — hardcoding it starved thinking models that burn tokens on reasoning.
         QJsonObject options;
-        options["num_predict"] = 2048;
         options["repeat_penalty"] = 1.15;
         jsonBody["options"] = options;
 
@@ -548,11 +550,50 @@ void LLMProviderManager::onPromptReply(QNetworkReply *reply)
                 responseText = msgObj["content"].toString();
                 // Safety net: if content is empty but structured thinking field exists,
                 // the model used Ollama's thinking mode and burned all tokens on reasoning.
+                // Extract a usable response from the thinking rather than showing nothing.
                 if (responseText.isEmpty() && msgObj.contains("thinking")) {
                     QString thinking = msgObj["thinking"].toString();
                     qWarning() << "LLM: Ollama response has empty content but"
                                << thinking.length() << "chars in 'thinking' field"
-                               << "— model burned all tokens on reasoning. Consider think:false.";
+                               << "— extracting response from reasoning content";
+
+                    // The thinking often ends with the intended response or conclusion.
+                    // Look for common transition patterns, then take everything after.
+                    static const QStringList markers = {
+                        "So my response:", "My response would be:",
+                        "I'll respond with:", "I should say:",
+                        "Here's my response:", "So I'll say:",
+                        "Final response:", "I'll reply:",
+                    };
+                    int bestPos = -1;
+                    for (const QString &marker : markers) {
+                        int pos = thinking.lastIndexOf(marker, -1, Qt::CaseInsensitive);
+                        if (pos > bestPos) bestPos = pos;
+                    }
+
+                    if (bestPos >= 0) {
+                        // Found a marker — take everything after it
+                        responseText = thinking.mid(bestPos);
+                        // Strip the marker prefix itself
+                        int newline = responseText.indexOf('\n');
+                        if (newline > 0 && newline < 40) {
+                            responseText = responseText.mid(newline + 1).trimmed();
+                        }
+                    } else {
+                        // No marker found — take the last ~800 chars as a rough conclusion
+                        int startPos = qMax(0, thinking.length() - 800);
+                        // Try to start at a sentence boundary
+                        if (startPos > 0) {
+                            int sentenceStart = thinking.indexOf(". ", startPos);
+                            if (sentenceStart > 0 && sentenceStart < startPos + 200) {
+                                startPos = sentenceStart + 2;
+                            }
+                        }
+                        responseText = thinking.mid(startPos).trimmed();
+                    }
+
+                    qDebug() << "LLM: extracted" << responseText.length()
+                             << "chars from thinking field as fallback response";
                 }
             } else {
                 responseText = obj["response"].toString();
