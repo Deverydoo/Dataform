@@ -17,7 +17,6 @@ Rectangle {
     ColumnLayout {
         anchors.fill: parent
         anchors.margins: 15
-        anchors.rightMargin: 24
         spacing: 8
 
         // Header with tabs
@@ -188,6 +187,8 @@ Rectangle {
                 clip: true
                 spacing: 4
                 model: episodesData
+                boundsBehavior: Flickable.StopAtBounds
+                ScrollBar.vertical: ScrollBar { policy: ScrollBar.AlwaysOff }
 
                 delegate: Rectangle {
                     width: episodeList.width
@@ -262,6 +263,8 @@ Rectangle {
                 clip: true
                 spacing: 4
                 model: traitsData
+                boundsBehavior: Flickable.StopAtBounds
+                ScrollBar.vertical: ScrollBar { policy: ScrollBar.AlwaysOff }
 
                 // Section header + trait card
                 delegate: Column {
@@ -521,6 +524,7 @@ Rectangle {
                         Layout.alignment: Qt.AlignHCenter
                         visible: (traitExtractor.lastResponse || "").length > 0
                         clip: true
+                        ScrollBar.vertical: ScrollBar { policy: ScrollBar.AlwaysOff }
 
                         Label {
                             id: responseLabel
@@ -576,6 +580,8 @@ Rectangle {
                     clip: true
                     spacing: 4
                     model: researchData
+                    boundsBehavior: Flickable.StopAtBounds
+                    ScrollBar.vertical: ScrollBar { policy: ScrollBar.AlwaysOff }
 
                     delegate: Rectangle {
                         width: researchList.width
@@ -760,6 +766,8 @@ Rectangle {
                     clip: true
                     spacing: 4
                     model: goalsData
+                    boundsBehavior: Flickable.StopAtBounds
+                    ScrollBar.vertical: ScrollBar { policy: ScrollBar.AlwaysOff }
 
                     delegate: Rectangle {
                         width: goalsList.width
@@ -896,11 +904,15 @@ Rectangle {
             }
 
             // ===== Analytics tab (index 4) =====
-            ScrollView {
+            Flickable {
                 clip: true
+                contentHeight: analyticsContent.implicitHeight
+                flickableDirection: Flickable.VerticalFlick
+                boundsBehavior: Flickable.StopAtBounds
 
                 ColumnLayout {
-                    width: tabStack.width
+                    id: analyticsContent
+                    width: parent.width
                     spacing: 12
 
                     // Mood Over Time
@@ -1295,6 +1307,8 @@ Rectangle {
                     clip: true
                     spacing: 4
                     model: leanTraitsData
+                    boundsBehavior: Flickable.StopAtBounds
+                    ScrollBar.vertical: ScrollBar { policy: ScrollBar.AlwaysOff }
 
                     delegate: Rectangle {
                         width: leanTraitsList.width

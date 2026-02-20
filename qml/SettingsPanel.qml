@@ -158,7 +158,7 @@ Rectangle {
                 contentHeight: modelsColumn.height + 40
                 clip: true
                 boundsBehavior: Flickable.StopAtBounds
-                ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+                ScrollBar.vertical: ScrollBar { policy: ScrollBar.AlwaysOff }
 
                 ColumnLayout {
                     id: modelsColumn
@@ -616,7 +616,7 @@ Rectangle {
                 contentHeight: behaviorColumn.height + 40
                 clip: true
                 boundsBehavior: Flickable.StopAtBounds
-                ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+                ScrollBar.vertical: ScrollBar { policy: ScrollBar.AlwaysOff }
 
                 ColumnLayout {
                     id: behaviorColumn
@@ -1223,7 +1223,7 @@ Rectangle {
                 contentHeight: trainingColumn.height + 40
                 clip: true
                 boundsBehavior: Flickable.StopAtBounds
-                ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+                ScrollBar.vertical: ScrollBar { policy: ScrollBar.AlwaysOff }
 
                 ColumnLayout {
                     id: trainingColumn
@@ -1676,7 +1676,7 @@ Rectangle {
                 contentHeight: dataColumn.height + 40
                 clip: true
                 boundsBehavior: Flickable.StopAtBounds
-                ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+                ScrollBar.vertical: ScrollBar { policy: ScrollBar.AlwaysOff }
 
                 ColumnLayout {
                     id: dataColumn

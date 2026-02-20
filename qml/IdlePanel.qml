@@ -68,7 +68,7 @@ Rectangle {
         boundsBehavior: Flickable.StopAtBounds
 
         ScrollBar.vertical: ScrollBar {
-            policy: ScrollBar.AsNeeded
+            policy: ScrollBar.AlwaysOff
         }
 
         ColumnLayout {

@@ -83,15 +83,15 @@ Rectangle {
         }
 
         // Messages area
-        ScrollView {
+        ListView {
+            id: messageList
             Layout.fillWidth: true
             Layout.fillHeight: true
             clip: true
-
-            ListView {
-                id: messageList
-                model: messageModel
-                spacing: 8
+            model: messageModel
+            spacing: 8
+            boundsBehavior: Flickable.StopAtBounds
+            ScrollBar.vertical: ScrollBar { policy: ScrollBar.AlwaysOff }
 
                 delegate: Item {
                     width: messageList.width - 20
@@ -272,7 +272,6 @@ Rectangle {
                         messageList.positionViewAtEnd()
                     })
                 }
-            }
         }
 
         // Image preview strip (pending images to send)
@@ -388,6 +387,7 @@ Rectangle {
                     Layout.fillWidth: true
                     Layout.fillHeight: true
                     clip: true
+                    ScrollBar.vertical: ScrollBar { policy: ScrollBar.AlwaysOff }
 
                     TextArea {
                         id: inputField

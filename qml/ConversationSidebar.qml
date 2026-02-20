@@ -393,15 +393,15 @@ Rectangle {
         }
 
         // Conversation list
-        ScrollView {
+        ListView {
+            id: conversationList
             Layout.fillWidth: true
             Layout.fillHeight: true
             clip: true
-
-            ListView {
-                id: conversationList
-                model: conversationModel
-                spacing: 2
+            model: conversationModel
+            spacing: 2
+            boundsBehavior: Flickable.StopAtBounds
+            ScrollBar.vertical: ScrollBar { policy: ScrollBar.AlwaysOff }
 
                 delegate: Rectangle {
                     width: conversationList.width
@@ -503,7 +503,6 @@ Rectangle {
                         }
                     }
                 }
-            }
         }
     }
 
