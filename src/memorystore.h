@@ -87,6 +87,18 @@ struct LearningPlanRecord {
     QDateTime lastSessionTs;
 };
 
+struct DistillationRecord {
+    qint64 id = -1;
+    QString userPrompt;
+    QString teacherResponse;
+    QString systemContext;
+    qint64 sourceEpisodeId = -1;
+    QString sourceType;         // "episode", "synthetic", "trait_qa"
+    double qualityScore = 0.0;
+    bool usedInTraining = false;
+    QDateTime createdTs;
+};
+
 class MemoryStore : public QObject
 {
     Q_OBJECT
@@ -126,6 +138,7 @@ public:
                                            const QString &inquiryText);
     Q_INVOKABLE bool updateEpisodeOutcome(qint64 episodeId,
                                            bool reasked, bool accepted, bool corrected);
+    Q_INVOKABLE bool updateEpisodeTags(qint64 episodeId, const QString &tags);
 
     EpisodicRecord getEpisode(qint64 id) const;
     QList<EpisodicRecord> getRecentEpisodes(int limit = 50) const;
@@ -203,6 +216,27 @@ public:
     bool advanceLessonPlan(qint64 id);
     bool updateLearningPlanStatus(qint64 id, int status);
     Q_INVOKABLE QVariantList getActivePlansForQml();
+
+    // --- Political Lean CRUD ---
+    qint64 insertLeanAnalysis(double leanScore, const QStringList &contributingTraitIds);
+    Q_INVOKABLE QVariantMap getLatestLeanForQml();
+    Q_INVOKABLE QVariantList getValueAndPolicyTraitsForQml();
+
+    // --- Distillation CRUD ---
+    qint64 insertDistillationPair(const QString &userPrompt, const QString &teacherResponse,
+                                   const QString &systemContext, qint64 sourceEpisodeId = -1,
+                                   const QString &sourceType = "episode", double qualityScore = 0.0);
+    QList<DistillationRecord> getUnusedDistillationPairs(int limit = 20) const;
+    bool markDistillationPairUsed(qint64 id);
+    int distillationPairCount() const;
+    int usedDistillationPairCount() const;
+    QList<qint64> getDistillationSourceEpisodeIds() const;
+
+    // Distillation eval CRUD
+    qint64 insertDistillationEval(const QString &testPrompt, const QString &teacherResp,
+                                   const QString &studentResp, double similarityScore);
+    double getAverageDistillationScore(int recentCount = 20) const;
+    Q_INVOKABLE QVariantList getDistillationStatsForQml();
 
     // Phase 5: Database accessor for ResearchStore
     QSqlDatabase &episodicDatabase() { return m_episodicDb; }

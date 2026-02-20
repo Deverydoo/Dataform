@@ -13,10 +13,23 @@ qt_standard_project_setup()
 # --- Phase 2: ORT Training (optional) ---
 option(DATAFORM_ENABLE_TRAINING "Enable ONNX Runtime Training support" ON)
 
+# --- llama.cpp embedded inference (optional) ---
+option(DATAFORM_ENABLE_LLAMACPP "Enable embedded llama.cpp inference for background tasks" OFF)
+
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake")
 
 if(DATAFORM_ENABLE_TRAINING)
     find_package(OnnxRuntimeTraining REQUIRED)
+endif()
+
+if(DATAFORM_ENABLE_LLAMACPP)
+    set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+    set(LLAMA_BUILD_COMMON OFF CACHE BOOL "" FORCE)
+    set(LLAMA_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+    set(LLAMA_BUILD_TOOLS OFF CACHE BOOL "" FORCE)
+    set(LLAMA_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+    set(LLAMA_BUILD_SERVER OFF CACHE BOOL "" FORCE)
+    add_subdirectory(third_party/llama.cpp llama)
 endif()
 
 # --- Core sources (Phase 0 + Phase 1) ---
@@ -72,6 +85,16 @@ set(DATAFORM_CORE_SOURCES
     src/clipboardhelper.cpp
     src/embeddingmanager.h
     src/embeddingmanager.cpp
+    src/distillationmanager.h
+    src/distillationmanager.cpp
+    src/backgroundjobmanager.h
+    src/backgroundjobmanager.cpp
+    src/llmresponseparser.h
+    src/llmresponseparser.cpp
+    src/toolregistry.h
+    src/toolregistry.cpp
+    src/threadsafeprogress.h
+    src/sessionguard.h
 )
 
 # --- Phase 2: Training sources (conditional) ---
@@ -98,9 +121,16 @@ set(DATAFORM_TRAINING_SOURCES
     src/ortinferencemanager.cpp
 )
 
+# --- llama.cpp sources (conditional) ---
+set(DATAFORM_LLAMACPP_SOURCES
+    src/llamacppmanager.h
+    src/llamacppmanager.cpp
+)
+
 qt_add_executable(Dataform
     ${DATAFORM_CORE_SOURCES}
     $<$<BOOL:${DATAFORM_ENABLE_TRAINING}>:${DATAFORM_TRAINING_SOURCES}>
+    $<$<BOOL:${DATAFORM_ENABLE_LLAMACPP}>:${DATAFORM_LLAMACPP_SOURCES}>
     dataform.rc
 )
 
@@ -151,6 +181,15 @@ if(DATAFORM_ENABLE_TRAINING)
             "${OnnxRuntimeTraining_DLL_PATH}/onnxruntime_providers_shared.dll"
             "$<TARGET_FILE_DIR:Dataform>/onnxruntime_providers_shared.dll"
         COMMENT "Copying ONNX Runtime DLLs to output directory"
+    )
+endif()
+
+# --- llama.cpp linking ---
+if(DATAFORM_ENABLE_LLAMACPP)
+    target_link_libraries(Dataform PRIVATE llama)
+    target_compile_definitions(Dataform PRIVATE DATAFORM_LLAMACPP_ENABLED)
+    target_include_directories(Dataform PRIVATE
+        ${CMAKE_SOURCE_DIR}/third_party/llama.cpp/include
     )
 endif()
 

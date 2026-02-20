@@ -1,4 +1,5 @@
 #include "embeddingmanager.h"
+#include "backgroundjobmanager.h"
 #include "memorystore.h"
 #include "settingsmanager.h"
 #include <QNetworkReply>
@@ -70,6 +71,50 @@ QList<SemanticSearchResult> EmbeddingManager::semanticSearch(
     }
 
     return results;
+}
+
+void EmbeddingManager::semanticSearchAsync(
+    const QVector<float> &queryEmbedding,
+    const QStringList &sourceTypes,
+    int topK)
+{
+    if (queryEmbedding.isEmpty()) {
+        emit semanticSearchComplete({});
+        return;
+    }
+
+    // COW snapshot — QMap implicit sharing makes this O(1).
+    // The background thread works on its own detached copy,
+    // so main-thread mutations to m_embeddingCache are safe.
+    QMap<QString, EmbeddingRecord> cacheSnapshot = m_embeddingCache;
+
+    BackgroundJobManager::instance()->submit<QList<SemanticSearchResult>>(
+        "semantic_search",
+        [cacheSnapshot = std::move(cacheSnapshot), queryEmbedding, sourceTypes, topK]()
+            -> QList<SemanticSearchResult> {
+            QList<SemanticSearchResult> results;
+            for (auto it = cacheSnapshot.constBegin(); it != cacheSnapshot.constEnd(); ++it) {
+                if (!sourceTypes.isEmpty() && !sourceTypes.contains(it->sourceType)) {
+                    continue;
+                }
+                double sim = cosineSimilarity(queryEmbedding, it->embedding);
+                results.append({it->sourceType, it->sourceId, sim});
+            }
+
+            int k = qMin(topK, results.size());
+            if (k > 0) {
+                std::partial_sort(results.begin(), results.begin() + k, results.end(),
+                    [](const SemanticSearchResult &a, const SemanticSearchResult &b) {
+                        return a.similarity > b.similarity;
+                    });
+                results = results.mid(0, k);
+            }
+            return results;
+        },
+        [this](const QList<SemanticSearchResult> &results) {
+            emit semanticSearchComplete(results);
+        }
+    );
 }
 
 void EmbeddingManager::loadEmbeddingsFromDb()

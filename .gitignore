@@ -10,6 +10,12 @@ third_party/onnxruntime-training/lib/
 third_party/onnxruntime-training/*.nupkg
 third_party/onnxruntime-training/*.zip
 
+# llama.cpp (submodule — build artifacts only)
+third_party/llama.cpp/build/
+
+# GGUF model files (large, user-downloaded)
+*.gguf
+
 # User profile data (personal databases, adapters, training artifacts)
 profiles/
 

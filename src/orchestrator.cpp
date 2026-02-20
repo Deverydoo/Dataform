@@ -1,4 +1,6 @@
 #include "orchestrator.h"
+#include "llmresponseparser.h"
+#include "toolregistry.h"
 #include "llmprovider.h"
 #include "memorystore.h"
 #include "settingsmanager.h"
@@ -13,12 +15,16 @@
 #include "profilemanager.h"
 #include "embeddingmanager.h"
 #include <QJsonObject>
+#include <QJsonDocument>
 #include <QRegularExpression>
 #include <QDebug>
 
 Orchestrator::Orchestrator(QObject *parent)
     : QObject(parent)
 {
+    m_agentLoopTimeout.setSingleShot(true);
+    m_agentLoopTimeout.setInterval(60000);  // 60s timeout for agent loop
+    connect(&m_agentLoopTimeout, &QTimer::timeout, this, &Orchestrator::onAgentLoopTimeout);
 }
 
 Orchestrator::~Orchestrator()
@@ -104,8 +110,41 @@ void Orchestrator::setEmbeddingManager(EmbeddingManager *manager)
                 this, [this](const QString &tag, QVector<float> emb) {
             if (tag == "user_message") {
                 m_lastUserEmbedding = emb;
+
+                // If we're waiting for this embedding to run async search, fire it now
+                if (m_awaitingSemanticSearch) {
+                    m_embeddingManager->semanticSearchAsync(emb, {"episode"}, 5);
+                }
             }
         });
+
+        connect(m_embeddingManager, &EmbeddingManager::semanticSearchComplete,
+                this, [this](QList<SemanticSearchResult> results) {
+            if (m_awaitingSemanticSearch) {
+                m_awaitingSemanticSearch = false;
+                m_pendingSemanticResults = results;
+                sendToLLM();
+            }
+        });
+
+        // If embedding fails, don't block — send without semantic results
+        connect(m_embeddingManager, &EmbeddingManager::embeddingError,
+                this, [this](const QString &tag, const QString &) {
+            if (tag == "user_message" && m_awaitingSemanticSearch) {
+                m_awaitingSemanticSearch = false;
+                m_pendingSemanticResults.clear();
+                sendToLLM();
+            }
+        });
+    }
+}
+
+void Orchestrator::setToolRegistry(ToolRegistry *registry)
+{
+    m_toolRegistry = registry;
+    if (m_toolRegistry) {
+        connect(m_toolRegistry, &ToolRegistry::toolExecutionComplete,
+                this, &Orchestrator::onToolExecutionComplete);
     }
 }
 
@@ -161,6 +200,8 @@ void Orchestrator::handleUserMessage(const QString &message)
     }
 
     m_isProcessing = true;
+    resetAgentLoop();
+    m_pendingSemanticResults.clear();
     emit isProcessingChanged();
     emit processingStarted();
 
@@ -206,8 +247,15 @@ void Orchestrator::handleUserMessage(const QString &message)
     updateTopicKeywords(message);
 
     // --- Phase 7: Embed user message for semantic recall (async) ---
+    // When semantic search is enabled, defer the LLM call until search completes.
+    // The embedding request is async: embeddingReady -> semanticSearchAsync -> searchComplete -> sendToLLM.
+    bool deferForSemanticSearch = false;
     if (m_embeddingManager && m_settingsManager
-        && m_settingsManager->semanticSearchEnabled()) {
+        && m_settingsManager->semanticSearchEnabled()
+        && m_embeddingManager->isModelAvailable()) {
+        m_awaitingSemanticSearch = true;
+        m_pendingSemanticResults.clear();
+        deferForSemanticSearch = true;
         m_embeddingManager->embedText(message, "user_message");
     }
 
@@ -283,9 +331,34 @@ void Orchestrator::handleUserMessage(const QString &message)
     }
     m_pendingCuriosityDirective = curiosityDirective;
 
+    // --- Send to LLM (or defer if waiting for semantic search) ---
+    if (deferForSemanticSearch) {
+        qDebug() << "Orchestrator: deferring LLM call for async semantic search";
+    } else {
+        sendToLLM();
+    }
+}
+
+void Orchestrator::sendToLLM()
+{
     // --- Build system prompt with identity context + curiosity ---
     int systemTokens = 0;
-    QString systemPrompt = buildSystemPrompt(curiosityDirective, systemTokens);
+    QString systemPrompt = buildSystemPrompt(m_pendingCuriosityDirective, systemTokens);
+
+    // --- Inject tool schema if available ---
+    if (m_toolRegistry && m_toolRegistry->toolCount() > 0) {
+        QString toolSchema = m_toolRegistry->buildToolSchemaPrompt();
+        int toolTokens = estimateTokens(toolSchema);
+        int contextLimit = m_settingsManager ? m_settingsManager->modelContextLength() : 8192;
+        int maxSystemTokens = contextLimit * 2 / 5;
+        if (systemTokens + toolTokens <= maxSystemTokens) {
+            systemPrompt += toolSchema;
+            systemTokens += toolTokens;
+        } else {
+            qDebug() << "Orchestrator: shedding tool schema (" << toolTokens
+                     << "tokens) — system budget:" << systemTokens << "/" << maxSystemTokens;
+        }
+    }
 
     // --- Build messages array with remaining token budget ---
     int contextLimit = m_settingsManager ? m_settingsManager->modelContextLength() : 8192;
@@ -293,11 +366,17 @@ void Orchestrator::handleUserMessage(const QString &message)
     int messageBudget = contextLimit - systemTokens - responseReserve;
     QJsonArray messages = buildMessagesArray(messageBudget);
 
+    // --- Append tool result messages from agent loop ---
+    for (const QJsonValue &v : m_agentLoop.toolResultMessages) {
+        messages.append(v);
+    }
+
     // --- Send to LLM ---
     qDebug() << "Orchestrator: sending conversation with"
              << messages.size() << "messages to LLM"
              << "(system:" << systemTokens << "tokens, budget:" << messageBudget << ")"
-             << (curiosityDirective.isEmpty() ? "" : "[with curiosity directive]");
+             << (m_pendingCuriosityDirective.isEmpty() ? "" : "[with curiosity directive]")
+             << (m_agentLoop.inAgentLoop ? QStringLiteral("[agent iteration %1]").arg(m_agentLoop.iterationCount) : "");
     m_llmProvider->sendConversation(systemPrompt, messages);
 }
 
@@ -314,13 +393,88 @@ void Orchestrator::onLLMResponse(const QString &response)
 
     qDebug() << "Orchestrator: received response, length:" << response.length();
 
-    // Add assistant response to conversation history
-    m_conversationHistory.append({"assistant", response});
-    m_lastAssistantResponse = response;
+    // --- Check for tool calls in the response ---
+    ParsedLLMResponse parsed = LLMResponseParser::parseToolCalls(response);
+
+    if (parsed.hasToolCalls()
+        && m_toolRegistry
+        && m_agentLoop.iterationCount < MAX_AGENT_ITERATIONS) {
+        // --- Enter/continue agent loop ---
+        qDebug() << "Orchestrator: detected" << parsed.toolCalls.size()
+                 << "tool call(s) at iteration" << m_agentLoop.iterationCount;
+
+        m_agentLoop.inAgentLoop = true;
+        m_agentLoop.iterationCount++;
+        m_agentLoopTimeout.start();  // Reset timeout
+
+        // Accumulate any text the LLM produced alongside the tool call
+        if (!parsed.textContent.isEmpty()) {
+            if (!m_agentLoop.accumulatedTextContent.isEmpty())
+                m_agentLoop.accumulatedTextContent += "\n\n";
+            m_agentLoop.accumulatedTextContent += parsed.textContent;
+        }
+
+        // Add the full assistant response (with tool_call blocks) to conversation history
+        // so the LLM sees its own tool calls on the next iteration
+        m_conversationHistory.append({"assistant", response});
+        emit conversationLengthChanged();
+
+        // Queue all tool calls and execute the first one
+        m_agentLoop.pendingToolCalls = parsed.toolCalls;
+        m_agentLoop.currentToolIndex = 0;
+
+        const ToolCallRequest &firstCall = m_agentLoop.pendingToolCalls.first();
+        m_toolRegistry->executeTool(firstCall.toolName, firstCall.params);
+        return;  // Wait for toolExecutionComplete signal
+    }
+
+    // --- No tool calls (or max iterations reached): final answer ---
+    QString finalText = response;
+    if (m_agentLoop.inAgentLoop) {
+        // Use the text from the final response, falling back to accumulated text
+        if (parsed.textContent.isEmpty() && !m_agentLoop.accumulatedTextContent.isEmpty()) {
+            finalText = m_agentLoop.accumulatedTextContent;
+        } else if (!parsed.textContent.isEmpty()) {
+            finalText = parsed.textContent;
+        }
+        qDebug() << "Orchestrator: agent loop complete after"
+                 << m_agentLoop.iterationCount << "iterations";
+    }
+
+    finalizeAgentResponse(finalText);
+}
+
+void Orchestrator::finalizeAgentResponse(const QString &finalText)
+{
+    // If we were in an agent loop, the intermediate assistant turns are already in history.
+    // Replace them with just the final answer for clean history.
+    if (m_agentLoop.inAgentLoop) {
+        // Remove intermediate assistant + tool-result turns added during the loop
+        // Walk back and remove turns that are part of the agent loop
+        int loopTurns = 0;
+        for (int i = m_conversationHistory.size() - 1; i >= 0; --i) {
+            // Count back through assistant (tool_call) and user (tool result) turns
+            const ConversationTurn &turn = m_conversationHistory[i];
+            if (turn.content.contains("<tool_call>") || turn.content.startsWith("[Tool Result:")) {
+                loopTurns++;
+            } else {
+                break;
+            }
+        }
+        if (loopTurns > 0) {
+            m_conversationHistory.erase(
+                m_conversationHistory.end() - loopTurns,
+                m_conversationHistory.end());
+        }
+    }
+
+    // Add final assistant response to conversation history
+    m_conversationHistory.append({"assistant", finalText});
+    m_lastAssistantResponse = finalText;
     emit conversationLengthChanged();
 
     // --- Detect if the response contains an inquiry ---
-    bool hadInquiry = detectInquiryInResponse(response);
+    bool hadInquiry = detectInquiryInResponse(finalText);
     if (m_lastResponseHadInquiry != hadInquiry) {
         m_lastResponseHadInquiry = hadInquiry;
         emit lastResponseHadInquiryChanged();
@@ -329,27 +483,16 @@ void Orchestrator::onLLMResponse(const QString &response)
     // --- Notify WhyEngine about the response ---
     if (m_whyEngine) {
         if (hadInquiry && !m_pendingCuriosityDirective.isEmpty()) {
-            // Extract the question from the response for tracking
-            // Simple: find last sentence ending with '?'
-            QStringList sentences = response.split(QRegularExpression("[.!?]"),
-                                                    Qt::SkipEmptyParts);
-            QString inquiry;
-            for (int i = sentences.size() - 1; i >= 0; --i) {
-                // The original response has the '?' stripped by split,
-                // so check the original
-                int pos = response.lastIndexOf('?');
-                if (pos >= 0) {
-                    // Find the start of that sentence
-                    int sentStart = response.lastIndexOf(QRegularExpression("[.!?]"), pos - 1);
-                    inquiry = response.mid(sentStart + 1, pos - sentStart).trimmed();
-                    break;
+            int pos = finalText.lastIndexOf('?');
+            if (pos >= 0) {
+                int sentStart = finalText.lastIndexOf(QRegularExpression("[.!?]"), pos - 1);
+                QString inquiry = finalText.mid(sentStart + 1, pos - sentStart).trimmed();
+                if (!inquiry.isEmpty()) {
+                    m_whyEngine->recordInquiry(inquiry);
                 }
             }
-            if (!inquiry.isEmpty()) {
-                m_whyEngine->recordInquiry(inquiry);
-            }
         }
-        m_whyEngine->onResponseDelivered(response, hadInquiry);
+        m_whyEngine->onResponseDelivered(finalText, hadInquiry);
         emit curiosityLevelChanged();
     }
 
@@ -361,7 +504,20 @@ void Orchestrator::onLLMResponse(const QString &response)
             break;
         }
     }
-    storeEpisode(lastUserMessage, response);
+    storeEpisode(lastUserMessage, finalText);
+
+    // --- Store tool usage in episode tags ---
+    if (!m_agentLoop.toolInvocations.isEmpty() && m_currentEpisodeId >= 0 && m_memoryStore) {
+        QJsonArray toolsUsed;
+        for (const auto &inv : m_agentLoop.toolInvocations) {
+            QJsonObject t;
+            t["tool"] = inv.first;
+            t["summary"] = inv.second;
+            toolsUsed.append(t);
+        }
+        m_memoryStore->updateEpisodeTags(m_currentEpisodeId,
+            "tools:" + QJsonDocument(toolsUsed).toJson(QJsonDocument::Compact));
+    }
 
     // --- Update episode with inquiry text if present ---
     if (hadInquiry && m_whyEngine && m_currentEpisodeId >= 0 && m_memoryStore) {
@@ -369,18 +525,16 @@ void Orchestrator::onLLMResponse(const QString &response)
     }
 
     // --- Emit response to UI ---
-    emit assistantResponseReady(response);
+    emit assistantResponseReady(finalText);
+
+    // --- Reset agent loop state ---
+    resetAgentLoop();
 
     m_isProcessing = false;
     emit isProcessingChanged();
     emit processingFinished();
 
     // --- Trigger trait extraction for high-signal events only ---
-    // Bulk conversation scanning happens during idle time (TraitExtractor::onIdleWindowOpened).
-    // Here we only trigger immediate extraction for the highest-signal moments:
-    // inquiry responses, user feedback, and user edits.
-
-    // Deferred inquiry extraction (high-signal: user answered a why-question)
     if (m_pendingInquiryExtraction && m_traitExtractor
         && !m_traitExtractor->isExtracting() && m_currentEpisodeId >= 0) {
         qDebug() << "Orchestrator: high-signal trait extraction (inquiry response) for episode"
@@ -391,11 +545,71 @@ void Orchestrator::onLLMResponse(const QString &response)
     }
 }
 
+void Orchestrator::onToolExecutionComplete(const ToolResult &result)
+{
+    if (!m_agentLoop.inAgentLoop) return;
+
+    qDebug() << "Orchestrator: tool" << result.toolName
+             << (result.success ? "succeeded" : "failed:" + result.errorMessage);
+
+    // Record the invocation for episode storage
+    m_agentLoop.toolInvocations.append({
+        result.toolName,
+        result.success ? result.resultText.left(200) : result.errorMessage.left(200)
+    });
+
+    // Append tool result as a user message so the LLM sees it
+    QString resultContent = QStringLiteral("[Tool Result: %1]\n%2")
+        .arg(result.toolName,
+             result.success ? result.resultText : QStringLiteral("Error: %1").arg(result.errorMessage));
+
+    // Add to conversation history (will be cleaned up in finalizeAgentResponse)
+    m_conversationHistory.append({"user", resultContent});
+    emit conversationLengthChanged();
+
+    // Also add to the tool result messages array used by sendToLLM
+    QJsonObject toolResultMsg;
+    toolResultMsg["role"] = "user";
+    toolResultMsg["content"] = resultContent;
+    m_agentLoop.toolResultMessages.append(toolResultMsg);
+
+    // Check if more tool calls are pending
+    m_agentLoop.currentToolIndex++;
+    if (m_agentLoop.currentToolIndex < m_agentLoop.pendingToolCalls.size()) {
+        const ToolCallRequest &nextCall = m_agentLoop.pendingToolCalls[m_agentLoop.currentToolIndex];
+        m_toolRegistry->executeTool(nextCall.toolName, nextCall.params);
+    } else {
+        // All tools executed — send back to LLM for next iteration
+        sendToLLM();
+    }
+}
+
+void Orchestrator::onAgentLoopTimeout()
+{
+    if (!m_agentLoop.inAgentLoop) return;
+
+    qWarning() << "Orchestrator: agent loop timed out after 60s";
+
+    // Use whatever text we've accumulated so far
+    QString fallbackText = m_agentLoop.accumulatedTextContent;
+    if (fallbackText.isEmpty()) {
+        fallbackText = "I was trying to help but ran into some difficulties. Could you rephrase your question?";
+    }
+    finalizeAgentResponse(fallbackText);
+}
+
+void Orchestrator::resetAgentLoop()
+{
+    m_agentLoopTimeout.stop();
+    m_agentLoop = AgentLoopState();
+}
+
 void Orchestrator::onLLMError(const QString &error)
 {
     if (!m_isProcessing) return;
 
     qDebug() << "Orchestrator: LLM error:" << error;
+    resetAgentLoop();
     emit errorOccurred(error);
 
     m_isProcessing = false;
@@ -442,7 +656,10 @@ void Orchestrator::clearConversation()
     m_currentTopic.clear();
     m_lastResponseHadInquiry = false;
     m_pendingCuriosityDirective.clear();
+    m_awaitingSemanticSearch = false;
+    m_pendingSemanticResults.clear();
     m_currentConversationId = -1;
+    resetAgentLoop();
 
     if (m_whyEngine) m_whyEngine->reset();
 
@@ -469,24 +686,29 @@ QString Orchestrator::buildSystemPrompt(const QString &curiosityDirective, int &
     int maxSystemTokens = contextLimit * 2 / 5;
 
     // --- Core identity (always included) ---
+    QString currentDateTime = QDateTime::currentDateTime().toString("dddd, MMMM d, yyyy 'at' h:mm AP");
     QString prompt = QString(
         "You are DATAFORM (Darwinian Adaptive Trait-Assimilating Form), "
         "%1's personal AI that learns who they are over time -- a mirror that reflects back "
         "their thinking, interests, and patterns.\n\n"
+        "Current date and time: %2\n\n"
         "CORE BEHAVIOR:\n"
         "- Engage with the substance of what %1 says. Talk about what they want to talk about.\n"
-        "- Push back, agree, or add a new angle. Have actual opinions.\n"
+        "- Share your perspective honestly. Agree when you agree, offer a different angle when you see one.\n"
         "- When something puzzles you about %1, ask about it.\n"
-        "- Match %1's tone and depth. Casual for casual, analytical for analytical.\n\n"
+        "- Match %1's energy and tone. If they're casual, be casual. If they're analytical, go deep. If they're playful, be playful back.\n\n"
         "DO NOT:\n"
         "- Act as therapist/coach. No 'how does that make you feel', no 'unpacking', no unsolicited self-improvement advice.\n"
         "- Fixate on one theme across turns. Respond to what %1 just said, not what you said before.\n"
-        "- Comment on typos, spelling, or habits. Note patterns silently.\n\n"
+        "- Comment on typos, spelling, or habits. Note patterns silently.\n"
+        "- Escalate or dramatize. Do not read adversarial intent into neutral statements. Do not use charged language (\"weaponize\", \"brutal truth\", \"expose\") unless %1 does first.\n"
+        "- Over-interpret motives. Take what %1 says at face value before looking for deeper strategy.\n\n"
         "STYLE:\n"
         "- 2-4 sentences for casual chat. 1-2 short paragraphs max for complex topics.\n"
         "- Plain language. No excessive formatting, lists, headers, or emphasis.\n"
+        "- Conversational and grounded, not theatrical or dramatic.\n"
         "- Each response must add something new. Never repeat or rephrase earlier messages."
-    ).arg(userName);
+    ).arg(userName, currentDateTime);
 
     // --- Build optional context sections with token tracking ---
     // Each section is added only if it fits within the budget.
@@ -531,7 +753,7 @@ QString Orchestrator::buildSystemPrompt(const QString &curiosityDirective, int &
     }
 
     // Memory recall (lower priority — shed first when tight)
-    // Phase 7: Use semantic search if available, fall back to keyword search
+    // Phase 7: Use async semantic search results if available, fall back to keyword search
     if (m_memoryStore && !m_conversationHistory.isEmpty()) {
         QString lastUserMsg;
         for (int i = m_conversationHistory.size() - 1; i >= 0; --i) {
@@ -544,16 +766,9 @@ QString Orchestrator::buildSystemPrompt(const QString &curiosityDirective, int &
             QList<EpisodicRecord> memories;
             bool usedSemantic = false;
 
-            // Try semantic search first
-            if (m_embeddingManager && m_settingsManager
-                && m_settingsManager->semanticSearchEnabled()
-                && m_embeddingManager->isModelAvailable()
-                && !m_lastUserEmbedding.isEmpty()) {
-
-                auto searchResults = m_embeddingManager->semanticSearch(
-                    m_lastUserEmbedding, {"episode"}, 5);
-
-                for (const auto &result : searchResults) {
+            // Use async semantic search results (populated by sendToLLM path)
+            if (!m_pendingSemanticResults.isEmpty()) {
+                for (const auto &result : m_pendingSemanticResults) {
                     if (result.similarity < 0.5) continue;
                     auto ep = m_memoryStore->getEpisode(result.sourceId);
                     if (ep.id >= 0 && ep.id != m_currentEpisodeId) {
@@ -574,16 +789,31 @@ QString Orchestrator::buildSystemPrompt(const QString &curiosityDirective, int &
             if (!memories.isEmpty()) {
                 QString memoryCtx = QString("Relevant things you remember from past conversations with %1:\n").arg(userName);
                 int added = 0;
+                QDateTime now = QDateTime::currentDateTime();
                 for (const auto &ep : memories) {
                     if (ep.id == m_currentEpisodeId) continue;
                     QString snippet = ep.userText.left(100);
                     if (ep.userText.length() > 100) snippet += "...";
                     if (snippet.isEmpty()) continue;
-                    memoryCtx += QString("- %1 said: \"%2\"\n").arg(userName, snippet);
+
+                    // Format time-ago for temporal awareness
+                    QString timeAgo;
+                    qint64 secsAgo = ep.timestamp.secsTo(now);
+                    if (secsAgo < 3600)
+                        timeAgo = QString("%1 minutes ago").arg(secsAgo / 60);
+                    else if (secsAgo < 86400)
+                        timeAgo = QString("%1 hours ago").arg(secsAgo / 3600);
+                    else if (secsAgo < 2592000)
+                        timeAgo = QString("%1 days ago").arg(secsAgo / 86400);
+                    else
+                        timeAgo = QString("%1 months ago").arg(secsAgo / 2592000);
+
+                    memoryCtx += QString("- [%1] %2 said: \"%3\"\n").arg(timeAgo, userName, snippet);
                     if (++added >= 3) break;
                 }
                 if (added > 0) {
-                    memoryCtx += "Reference these memories naturally if relevant.";
+                    memoryCtx += "Reference these memories naturally if relevant. Notice how much time has passed — "
+                                 "if weeks or months, ask about progress or follow up on what happened.";
                     sections.append({"\n\n" + memoryCtx, estimateTokens(memoryCtx)});
                 }
             }
@@ -860,7 +1090,7 @@ void Orchestrator::loadConversation(qint64 id)
     QString lastDateStr;
 
     // Recover thought opening if this is proactive and the opening episode is missing
-    if (isProactive && !hasOpeningEpisode) {
+    if (isProactive && !hasOpeningEpisode && m_thoughtEngine) {
         QString opening = m_thoughtEngine->buildOpeningMessage(linkedThoughtId);
         if (!opening.isEmpty()) {
             // Use earliest episode time (minus 1s) or now for the opening timestamp

@@ -81,6 +81,10 @@ private:
     void generateSentimentExamples(QList<TrainingExample> &examples,
                                     int maxCount, const QString &identityContext);
 
+    // Phase 8: Distillation data source
+    void generateDistillationExamples(QList<TrainingExample> &examples,
+                                       int maxCount, const QString &identityContext);
+
     MemoryStore *m_memoryStore = nullptr;
     Tokenizer *m_tokenizer = nullptr;
     ResearchStore *m_researchStore = nullptr;
@@ -104,6 +108,9 @@ private:
     static constexpr float NEWS_WEIGHT = 0.8f;
     static constexpr float THOUGHT_WEIGHT = 0.9f;
     static constexpr float SENTIMENT_WEIGHT = 0.7f;
+
+    // Phase 8: Distillation weight
+    static constexpr float DISTILLATION_WEIGHT = 1.8f;
 };
 
 #endif // DATAFORM_TRAINING_ENABLED

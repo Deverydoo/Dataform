@@ -267,7 +267,7 @@ void OrtTrainingManager::trainingLoop(QList<TrainingExample> examples,
     int totalSteps = qMin(config.maxStepsPerSession,
                           (numExamples + batchSize - 1) / batchSize);
 
-    m_totalSteps = totalSteps;
+    m_progress.setTotalSteps(totalSteps);
     QMetaObject::invokeMethod(this, [this]() {
         emit totalStepsChanged();
     }, Qt::QueuedConnection);
@@ -309,9 +309,9 @@ void OrtTrainingManager::trainingLoop(QList<TrainingExample> examples,
             lossSum += loss;
             completedSteps = step + 1;
 
-            // Update progress
-            m_currentStep = completedSteps;
-            m_currentLoss = loss;
+            // Update progress (thread-safe)
+            m_progress.setCurrentStep(completedSteps);
+            m_progress.setCurrentLoss(loss);
 
             QMetaObject::invokeMethod(this, [this, completedSteps, totalSteps, loss]() {
                 emit currentStepChanged();
@@ -385,7 +385,7 @@ bool OrtTrainingManager::exportForInference(const QString &outputPath)
 
 void OrtTrainingManager::setTrainingStatus(const QString &status)
 {
-    m_trainingStatus = status;
+    m_progress.setStatus(status);
     QMetaObject::invokeMethod(this, [this]() {
         emit trainingStatusChanged();
     }, Qt::QueuedConnection);

@@ -144,38 +144,56 @@ void TrainingDataGenerator::generateTrainingBatch(int maxExamples)
     }
     identityContext = traitStatements.join('\n');
 
-    // Budget allocation: 55% episodes, 15% research, 10% traits,
-    //                    10% goals+learning, 5% news+thoughts, 5% sentiment
-    int episodeBudget     = static_cast<int>(maxExamples * 0.55);
+    // Check if distillation pairs are available (Phase 8)
+    int unusedDistillationCount = 0;
+    auto unusedPairs = m_memoryStore->getUnusedDistillationPairs(maxExamples);
+    unusedDistillationCount = unusedPairs.size();
+
+    // Budget allocation:
+    //   With distillation (>=5 pairs): 45/10/15/10/10/5/5
+    //   Without distillation:          55/0/15/10/10/5/5
+    int distillBudget;
+    int episodeBudget;
+    if (unusedDistillationCount >= 5) {
+        distillBudget     = static_cast<int>(maxExamples * 0.10);
+        episodeBudget     = static_cast<int>(maxExamples * 0.45);
+    } else {
+        distillBudget     = 0;
+        episodeBudget     = static_cast<int>(maxExamples * 0.55);
+    }
     int researchBudget    = static_cast<int>(maxExamples * 0.15);
     int traitBudget       = static_cast<int>(maxExamples * 0.10);
     int goalLearnBudget   = static_cast<int>(maxExamples * 0.10);
     int newsThoughtBudget = static_cast<int>(maxExamples * 0.05);
-    int sentimentBudget   = maxExamples - episodeBudget - researchBudget
+    int sentimentBudget   = maxExamples - episodeBudget - distillBudget - researchBudget
                             - traitBudget - goalLearnBudget - newsThoughtBudget;
 
     // 1. Episodic examples (core data source)
     generateEpisodicExamples(m_examples, episodeBudget, identityContext);
 
-    // 2. Research finding examples
+    // 2. Distillation examples (Phase 8 — teacher knowledge transfer)
+    if (distillBudget > 0)
+        generateDistillationExamples(m_examples, distillBudget, identityContext);
+
+    // 3. Research finding examples
     generateResearchExamples(m_examples, researchBudget, identityContext);
 
-    // 3. Trait reinforcement examples
+    // 4. Trait reinforcement examples
     generateTraitExamples(m_examples, traitBudget, identityContext);
 
-    // 4. Goals + Learning plan examples (Phase 7)
+    // 5. Goals + Learning plan examples (Phase 7)
     int goalBudget = goalLearnBudget / 2;
     int learnBudget = goalLearnBudget - goalBudget;
     generateGoalExamples(m_examples, goalBudget, identityContext);
     generateLearningExamples(m_examples, learnBudget, identityContext);
 
-    // 5. News insights + Discussed thoughts examples (Phase 7)
+    // 6. News insights + Discussed thoughts examples (Phase 7)
     int newsBudget = newsThoughtBudget / 2;
     int thoughtBudget = newsThoughtBudget - newsBudget;
     generateNewsExamples(m_examples, newsBudget, identityContext);
     generateThoughtExamples(m_examples, thoughtBudget, identityContext);
 
-    // 6. Sentiment pattern examples (Phase 7)
+    // 7. Sentiment pattern examples (Phase 7)
     generateSentimentExamples(m_examples, sentimentBudget, identityContext);
 
     // Shuffle to prevent ordering bias
@@ -601,6 +619,51 @@ void TrainingDataGenerator::generateSentimentExamples(QList<TrainingExample> &ex
 
     if (added > 0) {
         qDebug() << "TrainingDataGenerator: generated" << added << "sentiment pattern examples";
+    }
+}
+
+void TrainingDataGenerator::generateDistillationExamples(QList<TrainingExample> &examples,
+                                                          int maxCount,
+                                                          const QString &identityContext)
+{
+    if (!m_memoryStore || !m_tokenizer || maxCount <= 0) return;
+
+    auto pairs = m_memoryStore->getUnusedDistillationPairs(maxCount);
+    if (pairs.isEmpty()) return;
+
+    int added = 0;
+    for (const auto &pair : pairs) {
+        // Build system prompt from stored context or identity
+        QString systemPrompt = pair.systemContext.isEmpty()
+            ? buildTrainingSystemPrompt(identityContext)
+            : pair.systemContext;
+
+        auto chatResult = m_tokenizer->encodeChat(
+            systemPrompt, pair.userPrompt, pair.teacherResponse, MAX_SEQUENCE_LENGTH);
+        if (chatResult.inputIds.empty()) continue;
+
+        // Validate quality score before using as weight multiplier
+        double qs = pair.qualityScore;
+        if (std::isnan(qs) || std::isinf(qs) || qs < 0.0 || qs > 1.0)
+            qs = 0.5;
+
+        TrainingExample example;
+        example.inputIds = std::move(chatResult.inputIds);
+        example.labels = std::move(chatResult.labels);
+        example.attentionMask = std::move(chatResult.attentionMask);
+        example.weight = DISTILLATION_WEIGHT * static_cast<float>(qs);
+        example.sourceEpisodeId = pair.sourceEpisodeId;
+        examples.append(std::move(example));
+
+        // Mark as used in training
+        if (!m_memoryStore->markDistillationPairUsed(pair.id)) {
+            qWarning() << "TrainingDataGenerator: failed to mark distillation pair" << pair.id << "as used";
+        }
+        ++added;
+    }
+
+    if (added > 0) {
+        qDebug() << "TrainingDataGenerator: generated" << added << "distillation examples";
     }
 }
 

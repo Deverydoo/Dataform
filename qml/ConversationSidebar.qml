@@ -570,8 +570,13 @@ Rectangle {
             text: "Delete"
             height: 32
             onTriggered: {
-                deleteConfirmDialog.conversationIdToDelete = contextMenu.conversationId
-                deleteConfirmDialog.open()
+                var cid = contextMenu.conversationId
+                if (cid >= 0) {
+                    var wasActive = (cid === orchestrator.currentConversationId)
+                    memoryStore.deleteConversation(cid)
+                    refreshConversations()
+                    if (wasActive) orchestrator.startNewConversation()
+                }
             }
 
             contentItem: Text {
@@ -636,55 +641,6 @@ Rectangle {
         }
     }
 
-    // Delete confirmation dialog
-    Dialog {
-        id: deleteConfirmDialog
-        property int conversationIdToDelete: -1
-        title: "Delete Conversation"
-        modal: true
-        anchors.centerIn: Overlay.overlay
-        width: 300
-        standardButtons: Dialog.Yes | Dialog.No
-
-        header: Label {
-            text: "Delete Conversation"
-            font.pixelSize: 14
-            font.bold: true
-            color: "#cccccc"
-            padding: 12
-        }
-
-        contentItem: Label {
-            text: "Delete this conversation? This cannot be undone."
-            color: "#cccccc"
-            font.pixelSize: 12
-            wrapMode: Text.WordWrap
-            padding: 12
-        }
-
-        background: Rectangle {
-            color: "#2d2d30"
-            radius: 8
-            border.color: "#3e3e42"
-            border.width: 1
-        }
-
-        onAccepted: {
-            if (conversationIdToDelete >= 0) {
-                var wasActive = (conversationIdToDelete === orchestrator.currentConversationId)
-                memoryStore.deleteConversation(conversationIdToDelete)
-                refreshConversations()
-                if (wasActive) {
-                    orchestrator.startNewConversation()
-                }
-            }
-            conversationIdToDelete = -1
-        }
-
-        onRejected: {
-            conversationIdToDelete = -1
-        }
-    }
 
     // --- Connections ---
 

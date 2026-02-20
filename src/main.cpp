@@ -28,6 +28,9 @@
 #include "learningengine.h"
 #include "clipboardhelper.h"
 #include "embeddingmanager.h"
+#include "distillationmanager.h"
+#include "toolregistry.h"
+#include "backgroundjobmanager.h"
 
 #ifdef DATAFORM_TRAINING_ENABLED
 #include "tokenizer.h"
@@ -40,6 +43,10 @@
 #include "evolutionengine.h"
 #include "lineagetracker.h"
 #include "ortinferencemanager.h"
+#endif
+
+#ifdef DATAFORM_LLAMACPP_ENABLED
+#include "llamacppmanager.h"
 #endif
 
 int main(int argc, char *argv[])
@@ -112,6 +119,12 @@ int main(int argc, char *argv[])
     // 17. Embedding Manager (Phase 7: Semantic Memory)
     EmbeddingManager embeddingManager;
 
+    // 18. Distillation Manager (Phase 8: Personalized Distillation)
+    DistillationManager distillationManager;
+
+    // 19. Tool Registry (Agentic Tool System)
+    ToolRegistry toolRegistry;
+
 #ifdef DATAFORM_TRAINING_ENABLED
     // 12. Tokenizer for ORT training (Phase 2)
     Tokenizer tokenizer;
@@ -139,6 +152,11 @@ int main(int argc, char *argv[])
 
     // 18. ORT Inference Manager - local model inference (Phase 6)
     OrtInferenceManager ortInferenceManager;
+#endif
+
+#ifdef DATAFORM_LLAMACPP_ENABLED
+    // 19. llama.cpp Manager - embedded inference for background tasks
+    LlamaCppManager llamaCppManager;
 #endif
 
     // --- Wire dependencies ---
@@ -220,6 +238,21 @@ int main(int argc, char *argv[])
     embeddingManager.setSettingsManager(&settingsManager);
     orchestrator.setEmbeddingManager(&embeddingManager);
 
+    // Wire Phase 8: Distillation Manager
+    distillationManager.setMemoryStore(&memoryStore);
+    distillationManager.setLLMProvider(&llmProvider);
+    distillationManager.setSettingsManager(&settingsManager);
+    distillationManager.setThoughtEngine(&thoughtEngine);
+    distillationManager.setEmbeddingManager(&embeddingManager);
+
+    // Wire Tool Registry (Agentic Tool System)
+    toolRegistry.setWebSearchEngine(&webSearchEngine);
+    toolRegistry.setMemoryStore(&memoryStore);
+    toolRegistry.setResearchStore(&researchStore);
+    toolRegistry.setReminderEngine(&reminderEngine);
+    toolRegistry.setEmbeddingManager(&embeddingManager);
+    orchestrator.setToolRegistry(&toolRegistry);
+
 #ifdef DATAFORM_TRAINING_ENABLED
     // Wire Phase 6: ORT Inference Manager
     ortInferenceManager.setTokenizer(&tokenizer);
@@ -259,6 +292,9 @@ int main(int argc, char *argv[])
     evolutionEngine.setOrtInferenceManager(&ortInferenceManager);
     evolutionEngine.setWeightMerger(&weightMerger);
 
+    // Wire Phase 8: Distillation Manager ORT inference (for graduation eval)
+    distillationManager.setOrtInferenceManager(&ortInferenceManager);
+
     // Wire Phase 4 lineage tracker
     lineageTracker.setProfileManager(&profileManager);
     lineageTracker.setAdapterManager(&adapterManager);
@@ -270,6 +306,11 @@ int main(int argc, char *argv[])
                      &evolutionEngine, &EvolutionEngine::onIdleWindowOpened);
     QObject::connect(&idleScheduler, &IdleScheduler::idleWindowClosed,
                      &evolutionEngine, &EvolutionEngine::onIdleWindowClosed);
+#endif
+
+#ifdef DATAFORM_LLAMACPP_ENABLED
+    // Wire llama.cpp Manager to LLM provider for background task routing
+    llmProvider.setLlamaCppManager(&llamaCppManager);
 #endif
 
     // --- Load settings and configure ---
@@ -368,6 +409,19 @@ int main(int argc, char *argv[])
     // Phase 5: Initialize research store (needs episodic DB from memoryStore)
     researchStore.initialize();
 
+    // Sync site blacklist from settings into WebSearchEngine
+    for (const QString &domain : settingsManager.siteBlacklist()) {
+        webSearchEngine.addBlacklistedDomain(domain);
+    }
+    QObject::connect(&settingsManager, &SettingsManager::siteBlacklistChanged,
+                     &webSearchEngine, [&]() {
+        // Rebuild WebSearchEngine blacklist from settings
+        const auto bl = settingsManager.siteBlacklist();
+        for (const QString &d : bl) {
+            webSearchEngine.addBlacklistedDomain(d);
+        }
+    });
+
     // Initialize ThoughtEngine (needs episodic DB from memoryStore)
     thoughtEngine.initialize();
 
@@ -416,6 +470,63 @@ int main(int argc, char *argv[])
             }
         }
     }
+#endif
+
+#ifdef DATAFORM_LLAMACPP_ENABLED
+    // Resolve background model path: relative paths are relative to app dir,
+    // directories are scanned for the first .gguf file inside them.
+    auto resolveGgufPath = [](const QString &raw) -> QString {
+        if (raw.isEmpty()) return {};
+        QString resolved = raw;
+        QFileInfo fi(resolved);
+        if (fi.isRelative())
+            resolved = QCoreApplication::applicationDirPath() + "/" + resolved;
+        fi.setFile(resolved);
+        if (fi.isDir()) {
+            QDir dir(resolved);
+            QStringList ggufFiles = dir.entryList({"*.gguf"}, QDir::Files, QDir::Name);
+            if (ggufFiles.isEmpty()) return {};
+            resolved = dir.absoluteFilePath(ggufFiles.first());
+        }
+        return QFile::exists(resolved) ? resolved : QString();
+    };
+
+    // Ensure default models directory exists
+    {
+        QString modelsDir = QCoreApplication::applicationDirPath() + "/models/background_llm";
+        QDir().mkpath(modelsDir);
+    }
+
+    // Load llama.cpp background model if configured
+    if (settingsManager.backgroundModelEnabled()) {
+        QString ggufPath = resolveGgufPath(settingsManager.backgroundModelPath());
+        if (!ggufPath.isEmpty()) {
+            if (llamaCppManager.loadModel(ggufPath)) {
+                qDebug() << "Loaded llama.cpp background model:" << ggufPath;
+            }
+        }
+    }
+
+    // React to background model settings changes
+    QObject::connect(&settingsManager, &SettingsManager::backgroundModelPathChanged, [&, resolveGgufPath]() {
+        if (settingsManager.backgroundModelEnabled()) {
+            llamaCppManager.unloadModel();
+            QString path = resolveGgufPath(settingsManager.backgroundModelPath());
+            if (!path.isEmpty()) {
+                llamaCppManager.loadModel(path);
+            }
+        }
+    });
+    QObject::connect(&settingsManager, &SettingsManager::backgroundModelEnabledChanged, [&, resolveGgufPath]() {
+        if (!settingsManager.backgroundModelEnabled()) {
+            llamaCppManager.unloadModel();
+        } else {
+            QString path = resolveGgufPath(settingsManager.backgroundModelPath());
+            if (!path.isEmpty()) {
+                llamaCppManager.loadModel(path);
+            }
+        }
+    });
 #endif
 
     // --- Phase 4: Initial disk usage scan ---
@@ -491,6 +602,12 @@ int main(int argc, char *argv[])
     QObject::connect(&orchestrator, &Orchestrator::episodeStored,
                      &embeddingManager, &EmbeddingManager::onEpisodeInserted);
 
+    // Connect idle scheduler to DistillationManager (Phase 8)
+    QObject::connect(&idleScheduler, &IdleScheduler::idleWindowOpened,
+                     &distillationManager, &DistillationManager::onIdleWindowOpened);
+    QObject::connect(&idleScheduler, &IdleScheduler::idleWindowClosed,
+                     &distillationManager, &DistillationManager::onIdleWindowClosed);
+
 #ifdef DATAFORM_TRAINING_ENABLED
     // Connect training events to ThoughtEngine
     QObject::connect(&evolutionEngine, &EvolutionEngine::evolutionCycleComplete,
@@ -510,15 +627,27 @@ int main(int argc, char *argv[])
         learningEngine.onIdleWindowClosed();
         newsEngine.onIdleWindowClosed();
         researchEngine.pauseResearch();
+        thoughtEngine.onIdleWindowClosed();
+        traitExtractor.onIdleWindowClosed();
         embeddingManager.onIdleWindowClosed();
+        distillationManager.onIdleWindowClosed();
         dataLifecycleManager.runLifecycleSweep();
 #ifdef DATAFORM_TRAINING_ENABLED
+        reflectionEngine.pauseReflection();
         evolutionEngine.pauseEvolution();
         if (ortTrainingManager.isTraining()) {
             ortTrainingManager.requestPause();
-            QThread::msleep(2000);
+            // Wait up to 6 seconds for training thread to finish
+            for (int i = 0; i < 60; ++i) {
+                if (!ortTrainingManager.isTraining()) break;
+                QThread::msleep(100);
+            }
         }
 #endif
+        // Drain background job pool
+        BackgroundJobManager::instance()->cancelAll();
+        BackgroundJobManager::instance()->waitForDone(5000);
+
         memoryStore.close();
     });
 
@@ -549,6 +678,9 @@ int main(int argc, char *argv[])
     engine.rootContext()->setContextProperty("learningEngine", &learningEngine);
     engine.rootContext()->setContextProperty("clipboardHelper", &clipboardHelper);
     engine.rootContext()->setContextProperty("embeddingManager", &embeddingManager);
+    engine.rootContext()->setContextProperty("distillationManager", &distillationManager);
+    engine.rootContext()->setContextProperty("toolRegistry", &toolRegistry);
+    engine.rootContext()->setContextProperty("jobManager", BackgroundJobManager::instance());
 
 #ifdef DATAFORM_TRAINING_ENABLED
     engine.rootContext()->setContextProperty("tokenizer", &tokenizer);
@@ -560,6 +692,10 @@ int main(int argc, char *argv[])
     engine.rootContext()->setContextProperty("evolutionEngine", &evolutionEngine);
     engine.rootContext()->setContextProperty("lineageTracker", &lineageTracker);
     engine.rootContext()->setContextProperty("ortInferenceManager", &ortInferenceManager);
+#endif
+
+#ifdef DATAFORM_LLAMACPP_ENABLED
+    engine.rootContext()->setContextProperty("llamaCppManager", &llamaCppManager);
 #endif
 
     const QUrl url(u"qrc:/Dataform/qml/Main.qml"_qs);

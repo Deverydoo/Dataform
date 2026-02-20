@@ -155,6 +155,24 @@ ApplicationWindow {
                 Layout.alignment: Qt.AlignVCenter
             }
 
+            // System clock
+            Label {
+                id: systemClock
+                font.pixelSize: 11
+                color: "#569cd6"
+                Layout.alignment: Qt.AlignVCenter
+                Timer {
+                    interval: 1000
+                    running: true
+                    repeat: true
+                    triggeredOnStart: true
+                    onTriggered: {
+                        var now = new Date()
+                        systemClock.text = Qt.formatDateTime(now, "ddd MMM d, yyyy  h:mm AP")
+                    }
+                }
+            }
+
             // Thought notification badge
             RowLayout {
                 spacing: 6
@@ -325,12 +343,12 @@ ApplicationWindow {
                     Layout.minimumWidth: 300
                 }
 
-                // Right: Idle + Memory panels (25%)
+                // Right: Idle + Memory panels (28%)
                 ColumnLayout {
                     Layout.fillHeight: true
-                    Layout.preferredWidth: parent.width * 0.25
-                    Layout.minimumWidth: 280
-                    Layout.maximumWidth: 450
+                    Layout.preferredWidth: parent.width * 0.28
+                    Layout.minimumWidth: 310
+                    Layout.maximumWidth: 500
                     spacing: 8
 
                     // Idle Mind panel (40% of right side, scrollable)

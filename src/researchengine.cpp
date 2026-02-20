@@ -1,5 +1,6 @@
 #include "researchengine.h"
 #include "fuzzylogic.h"
+#include "llmresponseparser.h"
 #include "memorystore.h"
 #include "llmprovider.h"
 #include "whyengine.h"
@@ -328,13 +329,38 @@ void ResearchEngine::phaseGenerateQuery()
         }
     }
 
+    // Graduated lean balancing: light nudge at |0.3|, stronger at |0.6|
+    QString leanHint;
+    if (m_memoryStore) {
+        QVariantMap lean = m_memoryStore->getLatestLeanForQml();
+        if (!lean.isEmpty()) {
+            double score = lean["leanScore"].toDouble();
+            double absScore = qAbs(score);
+            QString direction = score < 0 ? "left" : "right";
+            QString opposite = score < 0 ? "center or right-of-center" : "center or left-of-center";
+            if (absScore > 0.6) {
+                leanHint = QString(
+                    "The user's views lean strongly %1. Ensure at least one query "
+                    "explores %2 perspectives on this topic to broaden understanding.\n"
+                ).arg(direction, opposite);
+            } else if (absScore > 0.3) {
+                leanHint = QString(
+                    "The user's views lean slightly %1. When relevant, consider "
+                    "%2 angles on this topic for balance.\n"
+                ).arg(direction, opposite);
+            }
+        }
+    }
+
     QString prompt = QString(
         "Given user interest: \"%1\"\n"
-        "Known traits:\n%2\n"
+        "Known traits:\n%2\n%3"
         "Generate 1-2 DuckDuckGo search queries to learn more about this topic "
         "from the user's perspective. Return ONLY the queries, one per line. "
         "No numbering, no explanation."
-    ).arg(m_currentTopic, traitContext.isEmpty() ? "(none yet)" : traitContext);
+    ).arg(m_currentTopic,
+          traitContext.isEmpty() ? "(none yet)" : traitContext,
+          leanHint);
 
     m_llmProvider->sendBackgroundPrompt("ResearchEngine", prompt, LLMProviderManager::PriorityNormal);
 }
@@ -356,14 +382,15 @@ void ResearchEngine::phaseExecuteSearch()
         qDebug() << "ResearchEngine: searching:" << m_currentQueries.first();
         m_webSearch->search(m_currentQueries.first(), 5);
     } else {
-        // Wait for rate limiter
-        QTimer::singleShot(11000, this, [this]() {
+        // Wait for rate limiter — capture query now in case state changes before timer fires
+        QString queryToUse = m_currentQueries.first();
+        QTimer::singleShot(11000, this, [this, queryToUse]() {
             if (m_paused || !m_idleWindowOpen) {
                 setPhase(Idle);
                 return;
             }
-            if (m_webSearch->canSearch()) {
-                m_webSearch->search(m_currentQueries.first(), 5);
+            if (m_webSearch && m_webSearch->canSearch()) {
+                m_webSearch->search(queryToUse, 5);
             } else {
                 setPhase(Idle);
             }
@@ -500,13 +527,7 @@ void ResearchEngine::onLLMResponse(const QString &response)
 {
     m_consecutiveErrors = 0;  // Reset on any successful LLM response
 
-    // Strip <think>...</think> reasoning blocks (qwen3 and other reasoning models)
-    static const QRegularExpression thinkRegex(
-        "<think>.*?</think>",
-        QRegularExpression::DotMatchesEverythingOption);
-    QString cleanedResponse = response;
-    cleanedResponse.remove(thinkRegex);
-    cleanedResponse = cleanedResponse.trimmed();
+    QString cleanedResponse = LLMResponseParser::stripThinkTags(response);
 
     if (m_phase == GenerateQuery) {
         // Parse queries from response
@@ -531,16 +552,8 @@ void ResearchEngine::onLLMResponse(const QString &response)
 
     } else if (m_phase == FetchAndSummarize) {
         // Parse JSON summary
-        QString jsonStr = cleanedResponse;
-        // Try to extract JSON if wrapped in markdown
-        static QRegularExpression jsonExtract("\\{[^}]*\"summary\"[^}]*\\}");
-        QRegularExpressionMatch match = jsonExtract.match(jsonStr);
-        if (match.hasMatch()) {
-            jsonStr = match.captured(0);
-        }
-
-        QJsonDocument doc = QJsonDocument::fromJson(jsonStr.toUtf8());
-        if (doc.isObject()) {
+        QJsonDocument doc = LLMResponseParser::extractJsonObject(cleanedResponse, "ResearchEngine");
+        if (!doc.isNull()) {
             QJsonObject obj = doc.object();
             double relevance = obj.value("relevance").toDouble(0.0);
 

@@ -1,5 +1,6 @@
 #include "sentimenttracker.h"
 #include "fuzzylogic.h"
+#include "llmresponseparser.h"
 #include "memorystore.h"
 #include "llmprovider.h"
 #include "thoughtengine.h"
@@ -8,7 +9,6 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonArray>
-#include <QRegularExpression>
 #include <QDate>
 #include <QSqlQuery>
 #include <QSqlDatabase>
@@ -98,24 +98,8 @@ void SentimentTracker::onLLMResponse(const QString &response)
 
     if (m_pendingEpisodeId < 0) return;
 
-    QString cleaned = response.trimmed();
-    // Strip <think>...</think> reasoning blocks (qwen3 and other reasoning models)
-    static const QRegularExpression thinkRegex(
-        "<think>.*?</think>",
-        QRegularExpression::DotMatchesEverythingOption);
-    cleaned.remove(thinkRegex);
-    cleaned = cleaned.trimmed();
-    if (cleaned.startsWith("```")) {
-        int start = cleaned.indexOf('\n') + 1;
-        int end = cleaned.lastIndexOf("```");
-        if (end > start) cleaned = cleaned.mid(start, end - start).trimmed();
-    }
-
-    QJsonDocument doc = QJsonDocument::fromJson(cleaned.toUtf8());
-    if (!doc.isObject()) {
-        qDebug() << "SentimentTracker: failed to parse LLM response:" << cleaned.left(200);
-        return;
-    }
+    QJsonDocument doc = LLMResponseParser::extractJsonObject(response, "SentimentTracker");
+    if (doc.isNull()) return;
 
     QJsonObject obj = doc.object();
     double sentiment = qBound(-1.0, obj.value("sentiment").toDouble(0.0), 1.0);

@@ -129,7 +129,10 @@ QList<ResearchFinding> ResearchStore::getPendingFindings() const
 
     QSqlDatabase db = m_memoryStore->episodicDatabase();
     QSqlQuery q(db);
-    q.exec("SELECT * FROM research_findings WHERE status = 0 ORDER BY timestamp DESC");
+    if (!q.exec("SELECT * FROM research_findings WHERE status = 0 ORDER BY timestamp DESC")) {
+        qWarning() << "ResearchStore: getPendingFindings query failed:" << q.lastError().text();
+        return findings;
+    }
 
     while (q.next()) {
         ResearchFinding f;
@@ -158,8 +161,11 @@ QList<ResearchFinding> ResearchStore::getApprovedFindings() const
 
     QSqlDatabase db = m_memoryStore->episodicDatabase();
     QSqlQuery q(db);
-    q.exec("SELECT * FROM research_findings WHERE status = 1 "
-           "ORDER BY relevance_score DESC, timestamp DESC");
+    if (!q.exec("SELECT * FROM research_findings WHERE status = 1 "
+           "ORDER BY relevance_score DESC, timestamp DESC")) {
+        qWarning() << "ResearchStore: getApprovedFindings query failed:" << q.lastError().text();
+        return findings;
+    }
 
     while (q.next()) {
         ResearchFinding f;

@@ -39,6 +39,12 @@ public:
     void fetchPage(const QString &url);
     bool canSearch() const;
 
+    // Domain blacklist (paywalls, low-quality sites)
+    Q_INVOKABLE void addBlacklistedDomain(const QString &domain);
+    Q_INVOKABLE void removeBlacklistedDomain(const QString &domain);
+    Q_INVOKABLE QStringList blacklistedDomains() const { return m_blacklistedDomains; }
+    bool isDomainBlacklisted(const QString &url) const;
+
 signals:
     void isSearchingChanged();
     void searchCountChanged();
@@ -62,6 +68,7 @@ private:
     int m_searchCount = 0;
     int m_pendingMaxResults = 5;
     QDateTime m_lastSearchTime;
+    QStringList m_blacklistedDomains;
 
     static constexpr int MIN_SEARCH_INTERVAL_SEC = 10;
     static constexpr int MAX_PAGE_SIZE_BYTES = 512 * 1024;

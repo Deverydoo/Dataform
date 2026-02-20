@@ -2,6 +2,9 @@
 #ifdef DATAFORM_TRAINING_ENABLED
 #include "ortinferencemanager.h"
 #endif
+#ifdef DATAFORM_LLAMACPP_ENABLED
+#include "llamacppmanager.h"
+#endif
 #include <QNetworkRequest>
 #include <QDebug>
 
@@ -147,6 +150,41 @@ void LLMProviderManager::sendBackgroundRequest(const QString &owner,
                                                  const QJsonArray &messages,
                                                  BackgroundPriority priority)
 {
+#ifdef DATAFORM_LLAMACPP_ENABLED
+    // Route to embedded llama.cpp if available (separate from chat provider)
+    if (m_llamaCpp && m_llamaCpp->isModelLoaded()) {
+        if (m_llamaCppBusy) {
+            if (m_llamaCppQueue.size() >= MAX_BACKGROUND_QUEUE) {
+                qWarning() << "LLM: llama.cpp background queue full, dropping request from" << owner;
+                emit backgroundErrorOccurred(owner, "Background queue full");
+                return;
+            }
+            BackgroundRequest req{owner, systemPrompt, messages, priority};
+            bool inserted = false;
+            for (int i = 0; i < m_llamaCppQueue.size(); ++i) {
+                if (m_llamaCppQueue[i].priority > priority) {
+                    m_llamaCppQueue.insert(i, req);
+                    inserted = true;
+                    break;
+                }
+            }
+            if (!inserted) {
+                m_llamaCppQueue.enqueue(req);
+            }
+            qDebug() << "LLM: queued llama.cpp background request from" << owner
+                     << "priority:" << priority
+                     << "(queue size:" << m_llamaCppQueue.size() << ")";
+            return;
+        }
+
+        m_llamaCppBusy = true;
+        m_pendingLlamaCppTag = owner;
+        qDebug() << "LLM: sending background request to llama.cpp from" << owner;
+        m_llamaCpp->generate(systemPrompt, messages);
+        return;
+    }
+#endif
+
     if (m_backgroundBusy) {
         if (m_backgroundQueue.size() >= MAX_BACKGROUND_QUEUE) {
             qWarning() << "LLM: background queue full, dropping request from" << owner;
@@ -200,6 +238,32 @@ void LLMProviderManager::processNextBackgroundRequest()
     qDebug() << "LLM: processing queued background request from" << req.owner
              << "(remaining:" << m_backgroundQueue.size() << ")";
     sendConversation(req.systemPrompt, req.messages, req.owner);
+}
+
+void LLMProviderManager::sendTeacherRequest(const QString &owner,
+                                              const QString &systemPrompt,
+                                              const QJsonArray &messages)
+{
+    if (m_teacherBusy) {
+        qWarning() << "LLM: teacher request dropped from" << owner << "- teacher busy";
+        emit teacherErrorOccurred(owner, "Teacher model busy");
+        return;
+    }
+
+    // The teacher MUST use the external provider, not Local/ORT
+    if (m_currentProvider == "Local") {
+        qWarning() << "LLM: teacher request from" << owner
+                   << "rejected — current provider is Local (student). Need external provider.";
+        emit teacherErrorOccurred(owner, "Cannot distill from Local provider. Switch chat provider to Ollama or another external model.");
+        return;
+    }
+
+    m_teacherBusy = true;
+    m_activeTeacherOwner = owner;
+    qDebug() << "LLM: sending teacher request from" << owner;
+
+    // Use TEACHER: prefix tag so onPromptReply routes to teacher signals
+    sendConversation(systemPrompt, messages, QString("TEACHER:%1").arg(owner));
 }
 
 void LLMProviderManager::sendConversation(const QString &systemPrompt,
@@ -458,7 +522,14 @@ void LLMProviderManager::onPromptReply(QNetworkReply *reply)
             }
         }
 
-        if (!bgTag.isEmpty()) {
+        if (bgTag.startsWith("TEACHER:")) {
+            // Teacher request (distillation) — route to teacher signals
+            QString teacherOwner = bgTag.mid(8);  // strip "TEACHER:" prefix
+            m_teacherBusy = false;
+            m_activeTeacherOwner.clear();
+            emit teacherResponseReceived(teacherOwner, responseText);
+            qDebug() << "Teacher response for" << teacherOwner << ":" << responseText.left(80) << "...";
+        } else if (!bgTag.isEmpty()) {
             // Background request — route to dedicated signal
             m_backgroundBusy = false;
             m_activeBackgroundOwner.clear();
@@ -474,7 +545,12 @@ void LLMProviderManager::onPromptReply(QNetworkReply *reply)
         }
     } else {
         QString errorMsg = QString("Request failed: %1").arg(reply->errorString());
-        if (!bgTag.isEmpty()) {
+        if (bgTag.startsWith("TEACHER:")) {
+            QString teacherOwner = bgTag.mid(8);
+            m_teacherBusy = false;
+            m_activeTeacherOwner.clear();
+            emit teacherErrorOccurred(teacherOwner, errorMsg);
+        } else if (!bgTag.isEmpty()) {
             m_backgroundBusy = false;
             m_activeBackgroundOwner.clear();
             emit backgroundErrorOccurred(bgTag, errorMsg);
@@ -528,6 +604,51 @@ void LLMProviderManager::setOrtInferenceManager(OrtInferenceManager *mgr)
         connect(mgr, &OrtInferenceManager::tokenGenerated,
                 this, &LLMProviderManager::tokenStreamed);
     }
+}
+#endif
+
+#ifdef DATAFORM_LLAMACPP_ENABLED
+void LLMProviderManager::setLlamaCppManager(LlamaCppManager *mgr)
+{
+    m_llamaCpp = mgr;
+    if (mgr) {
+        connect(mgr, &LlamaCppManager::generationComplete,
+                this, [this](const QString &response) {
+            if (!m_pendingLlamaCppTag.isEmpty()) {
+                QString tag = m_pendingLlamaCppTag;
+                m_pendingLlamaCppTag.clear();
+                m_llamaCppBusy = false;
+                emit backgroundResponseReceived(tag, response);
+                if (!m_llamaCppBusy) {
+                    processNextLlamaCppRequest();
+                }
+            }
+        });
+        connect(mgr, &LlamaCppManager::generationError,
+                this, [this](const QString &error) {
+            if (!m_pendingLlamaCppTag.isEmpty()) {
+                QString tag = m_pendingLlamaCppTag;
+                m_pendingLlamaCppTag.clear();
+                m_llamaCppBusy = false;
+                emit backgroundErrorOccurred(tag, error);
+                if (!m_llamaCppBusy) {
+                    processNextLlamaCppRequest();
+                }
+            }
+        });
+    }
+}
+
+void LLMProviderManager::processNextLlamaCppRequest()
+{
+    if (m_llamaCppQueue.isEmpty()) return;
+
+    BackgroundRequest req = m_llamaCppQueue.dequeue();
+    m_llamaCppBusy = true;
+    m_pendingLlamaCppTag = req.owner;
+    qDebug() << "LLM: processing queued llama.cpp request from" << req.owner
+             << "(remaining:" << m_llamaCppQueue.size() << ")";
+    m_llamaCpp->generate(req.systemPrompt, req.messages);
 }
 #endif
 

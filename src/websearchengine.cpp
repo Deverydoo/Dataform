@@ -9,6 +9,12 @@ WebSearchEngine::WebSearchEngine(QObject *parent)
     : QObject(parent)
     , m_networkManager(new QNetworkAccessManager(this))
 {
+    // Seed blacklist with common paywall sites
+    m_blacklistedDomains = {
+        "nytimes.com", "wsj.com", "washingtonpost.com", "ft.com",
+        "economist.com", "bloomberg.com", "theathletic.com",
+        "thetimes.co.uk", "telegraph.co.uk", "barrons.com"
+    };
 }
 
 WebSearchEngine::~WebSearchEngine()
@@ -57,6 +63,12 @@ void WebSearchEngine::fetchPage(const QString &urlStr)
     QUrl url(urlStr);
     if (!url.isValid()) {
         emit searchError("Invalid URL: " + urlStr);
+        return;
+    }
+
+    if (isDomainBlacklisted(urlStr)) {
+        qDebug() << "WebSearchEngine: skipping blacklisted domain:" << url.host();
+        emit searchError("Blacklisted domain: " + url.host());
         return;
     }
 
@@ -138,6 +150,33 @@ void WebSearchEngine::onPageReply(QNetworkReply *reply)
              << "(" << content.wordCount << "words)";
 }
 
+// --- Domain blacklist ---
+
+void WebSearchEngine::addBlacklistedDomain(const QString &domain)
+{
+    QString d = domain.toLower().trimmed();
+    if (!d.isEmpty() && !m_blacklistedDomains.contains(d)) {
+        m_blacklistedDomains.append(d);
+        qDebug() << "WebSearchEngine: blacklisted domain:" << d;
+    }
+}
+
+void WebSearchEngine::removeBlacklistedDomain(const QString &domain)
+{
+    m_blacklistedDomains.removeAll(domain.toLower().trimmed());
+}
+
+bool WebSearchEngine::isDomainBlacklisted(const QString &url) const
+{
+    QString host = QUrl(url).host().toLower();
+    for (const QString &blocked : m_blacklistedDomains) {
+        if (host == blocked || host.endsWith("." + blocked)) {
+            return true;
+        }
+    }
+    return false;
+}
+
 QList<SearchResult> WebSearchEngine::parseDuckDuckGoHtml(const QByteArray &html,
                                                           int maxResults) const
 {
@@ -180,8 +219,8 @@ QList<SearchResult> WebSearchEngine::parseDuckDuckGoHtml(const QByteArray &html,
             result.snippet = decodeHtmlEntities(rawSnippet).trimmed();
         }
 
-        // Only add if we have a valid URL
-        if (!result.url.isEmpty() && result.url.startsWith("http")) {
+        // Only add if we have a valid URL and not blacklisted
+        if (!result.url.isEmpty() && result.url.startsWith("http") && !isDomainBlacklisted(result.url)) {
             results.append(result);
         }
     }

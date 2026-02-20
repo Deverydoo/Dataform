@@ -15,6 +15,10 @@
 class OrtInferenceManager;
 #endif
 
+#ifdef DATAFORM_LLAMACPP_ENABLED
+class LlamaCppManager;
+#endif
+
 class LLMProviderManager : public QObject
 {
     Q_OBJECT
@@ -72,6 +76,13 @@ public:
                               BackgroundPriority priority = PriorityNormal);
     bool isBackgroundBusy() const { return m_backgroundBusy; }
 
+    // Teacher request — always routes to external provider (bypasses llama.cpp)
+    // Used by DistillationManager to get high-quality teacher responses
+    void sendTeacherRequest(const QString &owner,
+                            const QString &systemPrompt,
+                            const QJsonArray &messages);
+    bool isTeacherBusy() const { return m_teacherBusy; }
+
     Q_INVOKABLE void refreshModels();
     Q_INVOKABLE void testConnection();
 
@@ -89,6 +100,11 @@ public:
     void setOrtInferenceManager(OrtInferenceManager *mgr);
 #endif
 
+#ifdef DATAFORM_LLAMACPP_ENABLED
+    // Embedded llama.cpp for background tasks
+    void setLlamaCppManager(LlamaCppManager *mgr);
+#endif
+
 signals:
     void currentProviderChanged();
     void currentModelChanged();
@@ -102,6 +118,8 @@ signals:
     void errorOccurred(const QString &error);
     void backgroundResponseReceived(const QString &owner, const QString &response);
     void backgroundErrorOccurred(const QString &owner, const QString &error);
+    void teacherResponseReceived(const QString &owner, const QString &response);
+    void teacherErrorOccurred(const QString &owner, const QString &error);
 
 private slots:
     void onNetworkReply(QNetworkReply *reply);
@@ -151,8 +169,20 @@ private:
     bool m_backgroundBusy = false;
     QString m_pendingLocalTag;  // For local (ORT) provider background routing
 
+    // Teacher request state (distillation — always uses external provider)
+    bool m_teacherBusy = false;
+    QString m_activeTeacherOwner;
+
 #ifdef DATAFORM_TRAINING_ENABLED
     OrtInferenceManager *m_ortInference = nullptr;
+#endif
+
+#ifdef DATAFORM_LLAMACPP_ENABLED
+    LlamaCppManager *m_llamaCpp = nullptr;
+    QString m_pendingLlamaCppTag;
+    bool m_llamaCppBusy = false;
+    QQueue<BackgroundRequest> m_llamaCppQueue;
+    void processNextLlamaCppRequest();
 #endif
 };
 

@@ -12,6 +12,8 @@
 #include <memory>
 #include <random>
 
+#include "sessionguard.h"
+
 // Must use the training header (not just onnxruntime_cxx_api.h) because
 // the training header forward-declares OrtRelease(OrtTrainingSession*) before
 // onnxruntime_cxx_api.h processes Base<T> — needed for MOC compilation order.
@@ -74,6 +76,7 @@ private:
     Tokenizer *m_tokenizer = nullptr;
     QAtomicInt m_cancelRequested{0};
     QAtomicInt m_isGenerating{0};
+    SessionGuard m_sessionGuard;
     QString m_modelPath;
 
     std::mt19937 m_rng;

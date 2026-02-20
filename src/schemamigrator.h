@@ -41,8 +41,8 @@ public:
                                     int targetVersion);
 
     // --- Current schema version constants ---
-    static constexpr int EPISODIC_DB_VERSION = 8;
-    static constexpr int TRAITS_DB_VERSION = 1;
+    static constexpr int EPISODIC_DB_VERSION = 9;
+    static constexpr int TRAITS_DB_VERSION = 2;
     static constexpr int SETTINGS_VERSION = 2;
     static constexpr int ADAPTER_INDEX_VERSION = 1;
     static constexpr int ADAPTER_METADATA_VERSION = 1;

@@ -4,8 +4,15 @@
 #include <QObject>
 #include <QString>
 #include <QJsonArray>
+#include <QJsonObject>
 #include <QList>
+#include <QPair>
 #include <QVector>
+#include <QTimer>
+
+struct SemanticSearchResult;
+struct ToolCallRequest;
+struct ToolResult;
 
 class LLMProviderManager;
 class MemoryStore;
@@ -20,6 +27,7 @@ class SentimentTracker;
 class LearningEngine;
 class ProfileManager;
 class EmbeddingManager;
+class ToolRegistry;
 
 class Orchestrator : public QObject
 {
@@ -48,6 +56,7 @@ public:
     void setLearningEngine(LearningEngine *engine);
     void setProfileManager(ProfileManager *manager);
     void setEmbeddingManager(EmbeddingManager *manager);
+    void setToolRegistry(ToolRegistry *registry);
 
     bool isProcessing() const { return m_isProcessing; }
     int conversationLength() const { return m_conversationHistory.size(); }
@@ -101,6 +110,8 @@ signals:
 private slots:
     void onLLMResponse(const QString &response);
     void onLLMError(const QString &error);
+    void onToolExecutionComplete(const ToolResult &result);
+    void onAgentLoopTimeout();
 
 private:
     struct ConversationTurn {
@@ -119,6 +130,9 @@ private:
     QString computeEditDiff(const QString &original, const QString &edited) const;
     void updateTopicKeywords(const QString &message);
     QString extractSearchKeywords(const QString &message) const;
+    void sendToLLM();
+    void finalizeAgentResponse(const QString &finalText);
+    void resetAgentLoop();
 
     LLMProviderManager *m_llmProvider = nullptr;
     MemoryStore *m_memoryStore = nullptr;
@@ -133,6 +147,7 @@ private:
     LearningEngine *m_learningEngine = nullptr;
     ProfileManager *m_profileManager = nullptr;
     EmbeddingManager *m_embeddingManager = nullptr;
+    ToolRegistry *m_toolRegistry = nullptr;
 
     bool m_isProcessing = false;
     QString m_currentTopic;
@@ -150,7 +165,23 @@ private:
     QList<ConversationTurn> m_conversationHistory;
     QStringList m_pendingImages;  // Temp storage for current message images
     QVector<float> m_lastUserEmbedding;  // Cached embedding for semantic recall
+    QList<SemanticSearchResult> m_pendingSemanticResults;
+    bool m_awaitingSemanticSearch = false;
     static constexpr int MAX_HISTORY_TURNS = 20;
+
+    // Agentic tool-calling loop state
+    struct AgentLoopState {
+        int iterationCount = 0;
+        bool inAgentLoop = false;
+        QList<ToolCallRequest> pendingToolCalls;
+        int currentToolIndex = 0;
+        QJsonArray toolResultMessages;
+        QString accumulatedTextContent;
+        QList<QPair<QString, QString>> toolInvocations;  // (toolName, resultSummary)
+    };
+    static constexpr int MAX_AGENT_ITERATIONS = 5;
+    AgentLoopState m_agentLoop;
+    QTimer m_agentLoopTimeout;
 };
 
 #endif // ORCHESTRATOR_H

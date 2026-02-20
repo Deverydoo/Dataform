@@ -1,4 +1,5 @@
 #include "datalifecyclemanager.h"
+#include "backgroundjobmanager.h"
 #include "memorystore.h"
 #include "profilemanager.h"
 #include "settingsmanager.h"
@@ -89,18 +90,32 @@ void DataLifecycleManager::updateDiskUsage()
 {
     if (!m_profileManager) return;
 
-    qint64 totalSize = calculateDirectorySize(m_profileManager->profilePath());
-
-    if (m_diskUsageBytes != totalSize) {
-        m_diskUsageBytes = totalSize;
-        emit diskUsageChanged();
-    }
-
-    // Update archived counts from MemoryStore
+    // Update archived counts from MemoryStore (DB on main thread — fast)
     if (m_memoryStore) {
         m_archivedEpisodeCount = m_memoryStore->archivedEpisodeCount();
         m_decayedTraitCount = m_memoryStore->archivedTraitCount();
     }
+
+    // Offload recursive directory scan to background thread
+    QString profilePath = m_profileManager->profilePath();
+    BackgroundJobManager::instance()->submit<qint64>(
+        "disk_usage_scan",
+        [profilePath]() -> qint64 {
+            qint64 size = 0;
+            QDirIterator it(profilePath, QDir::Files, QDirIterator::Subdirectories);
+            while (it.hasNext()) {
+                it.next();
+                size += it.fileInfo().size();
+            }
+            return size;
+        },
+        [this](const qint64 &totalSize) {
+            if (m_diskUsageBytes != totalSize) {
+                m_diskUsageBytes = totalSize;
+                emit diskUsageChanged();
+            }
+        }
+    );
 }
 
 // --- Private ---

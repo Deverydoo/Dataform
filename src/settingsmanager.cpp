@@ -249,6 +249,32 @@ void SettingsManager::removeNewsFeed(int index)
     saveSettings();
 }
 
+void SettingsManager::setSiteBlacklist(const QStringList &list)
+{
+    if (m_siteBlacklist != list) {
+        m_siteBlacklist = list;
+        emit siteBlacklistChanged();
+        saveSettings();
+    }
+}
+
+void SettingsManager::addBlacklistedSite(const QString &domain)
+{
+    QString d = domain.toLower().trimmed();
+    if (d.isEmpty() || m_siteBlacklist.contains(d)) return;
+    m_siteBlacklist.append(d);
+    emit siteBlacklistChanged();
+    saveSettings();
+}
+
+void SettingsManager::removeBlacklistedSite(const QString &domain)
+{
+    if (m_siteBlacklist.removeAll(domain.toLower().trimmed()) > 0) {
+        emit siteBlacklistChanged();
+        saveSettings();
+    }
+}
+
 void SettingsManager::setGoalsEnabled(bool enabled)
 {
     if (m_goalsEnabled != enabled) {
@@ -323,6 +349,43 @@ void SettingsManager::setSemanticSearchEnabled(bool enabled)
     }
 }
 
+void SettingsManager::setBackgroundModelEnabled(bool enabled)
+{
+    if (m_backgroundModelEnabled != enabled) {
+        m_backgroundModelEnabled = enabled;
+        emit backgroundModelEnabledChanged();
+        saveSettings();
+    }
+}
+
+void SettingsManager::setBackgroundModelPath(const QString &path)
+{
+    if (m_backgroundModelPath != path) {
+        m_backgroundModelPath = path;
+        emit backgroundModelPathChanged();
+        saveSettings();
+    }
+}
+
+void SettingsManager::setDistillationEnabled(bool enabled)
+{
+    if (m_distillationEnabled != enabled) {
+        m_distillationEnabled = enabled;
+        emit distillationEnabledChanged();
+        saveSettings();
+    }
+}
+
+void SettingsManager::setDistillationDailyCycles(int cycles)
+{
+    cycles = qBound(1, cycles, 10);
+    if (m_distillationDailyCycles != cycles) {
+        m_distillationDailyCycles = cycles;
+        emit distillationDailyCyclesChanged();
+        saveSettings();
+    }
+}
+
 void SettingsManager::setEncryptionMode(const QString &mode)
 {
     QString m = mode;
@@ -377,6 +440,10 @@ void SettingsManager::saveSettings()
     QJsonArray feedsArray;
     for (const QString &feed : m_newsFeeds) feedsArray.append(feed);
     json["newsFeeds"] = feedsArray;
+    // Site blacklist
+    QJsonArray blacklistArray;
+    for (const QString &site : m_siteBlacklist) blacklistArray.append(site);
+    json["siteBlacklist"] = blacklistArray;
     // Agentic features
     json["goalsEnabled"] = m_goalsEnabled;
     json["sentimentTrackingEnabled"] = m_sentimentTrackingEnabled;
@@ -389,6 +456,12 @@ void SettingsManager::saveSettings()
     // Phase 7: Semantic Memory
     json["embeddingModel"] = m_embeddingModel;
     json["semanticSearchEnabled"] = m_semanticSearchEnabled;
+    // Background model (llama.cpp)
+    json["backgroundModelEnabled"] = m_backgroundModelEnabled;
+    json["backgroundModelPath"] = m_backgroundModelPath;
+    // Phase 8: Distillation
+    json["distillationEnabled"] = m_distillationEnabled;
+    json["distillationDailyCycles"] = m_distillationDailyCycles;
     // Security
     json["encryptionMode"] = m_encryptionMode;
 
@@ -450,6 +523,14 @@ void SettingsManager::loadSettings()
                     m_newsFeeds.append("https://www.allsides.com/rss/news");
                 }
             }
+            if (json.contains("siteBlacklist")) {
+                m_siteBlacklist.clear();
+                QJsonArray arr = json["siteBlacklist"].toArray();
+                for (const QJsonValue &v : arr) {
+                    QString site = v.toString().toLower().trimmed();
+                    if (!site.isEmpty()) m_siteBlacklist.append(site);
+                }
+            }
             m_goalsEnabled = json.value("goalsEnabled").toBool(true);
             m_sentimentTrackingEnabled = json.value("sentimentTrackingEnabled").toBool(true);
             m_teachMeEnabled = json.value("teachMeEnabled").toBool(true);
@@ -458,6 +539,10 @@ void SettingsManager::loadSettings()
             m_modelContextLength = json.value("modelContextLength").toInt(8192);
             m_embeddingModel = json.value("embeddingModel").toString("nomic-embed-text");
             m_semanticSearchEnabled = json.value("semanticSearchEnabled").toBool(true);
+            m_backgroundModelEnabled = json.value("backgroundModelEnabled").toBool(false);
+            m_backgroundModelPath = json.value("backgroundModelPath").toString("models/background_llm");
+            m_distillationEnabled = json.value("distillationEnabled").toBool(false);
+            m_distillationDailyCycles = json.value("distillationDailyCycles").toInt(3);
             m_encryptionMode = json.value("encryptionMode").toString("portable");
             if (m_encryptionMode != "portable" && m_encryptionMode != "machine_locked")
                 m_encryptionMode = "portable";
@@ -492,6 +577,7 @@ void SettingsManager::loadSettings()
     emit newsEnabledChanged();
     emit maxNewsPerDayChanged();
     emit newsFeedsChanged();
+    emit siteBlacklistChanged();
     emit goalsEnabledChanged();
     emit sentimentTrackingEnabledChanged();
     emit teachMeEnabledChanged();
@@ -500,6 +586,10 @@ void SettingsManager::loadSettings()
     emit modelContextLengthChanged();
     emit embeddingModelChanged();
     emit semanticSearchEnabledChanged();
+    emit backgroundModelEnabledChanged();
+    emit backgroundModelPathChanged();
+    emit distillationEnabledChanged();
+    emit distillationDailyCyclesChanged();
     emit encryptionModeChanged();
     emit settingsLoaded();
 }
@@ -529,6 +619,7 @@ void SettingsManager::resetToDefaults()
     m_newsEnabled = true;
     m_maxNewsPerDay = 3;
     m_newsFeeds = {"https://www.allsides.com/rss/news"};
+    m_siteBlacklist.clear();
     m_goalsEnabled = true;
     m_sentimentTrackingEnabled = true;
     m_teachMeEnabled = true;
@@ -537,6 +628,10 @@ void SettingsManager::resetToDefaults()
     m_modelContextLength = 8192;
     m_embeddingModel = "nomic-embed-text";
     m_semanticSearchEnabled = true;
+    m_backgroundModelEnabled = false;
+    m_backgroundModelPath = "models/background_llm";
+    m_distillationEnabled = false;
+    m_distillationDailyCycles = 3;
     m_encryptionMode = "portable";
 
     emit userNameChanged();
@@ -560,6 +655,7 @@ void SettingsManager::resetToDefaults()
     emit newsEnabledChanged();
     emit maxNewsPerDayChanged();
     emit newsFeedsChanged();
+    emit siteBlacklistChanged();
     emit goalsEnabledChanged();
     emit sentimentTrackingEnabledChanged();
     emit teachMeEnabledChanged();
@@ -568,6 +664,10 @@ void SettingsManager::resetToDefaults()
     emit modelContextLengthChanged();
     emit embeddingModelChanged();
     emit semanticSearchEnabledChanged();
+    emit backgroundModelEnabledChanged();
+    emit backgroundModelPathChanged();
+    emit distillationEnabledChanged();
+    emit distillationDailyCyclesChanged();
     emit encryptionModeChanged();
 
     saveSettings();

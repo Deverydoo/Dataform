@@ -1,4 +1,5 @@
 #include "learningengine.h"
+#include "llmresponseparser.h"
 #include "memorystore.h"
 #include "llmprovider.h"
 #include "thoughtengine.h"
@@ -8,7 +9,6 @@
 #include <QJsonDocument>
 #include <QJsonArray>
 #include <QJsonObject>
-#include <QRegularExpression>
 #include <QTimer>
 
 LearningEngine::LearningEngine(QObject *parent)
@@ -245,22 +245,8 @@ void LearningEngine::onLLMResponse(const QString &response)
 
     if (m_phase != GeneratePlan) return;
 
-    QString cleaned = response.trimmed();
-    // Strip <think>...</think> reasoning blocks (qwen3 and other reasoning models)
-    static const QRegularExpression thinkRegex(
-        "<think>.*?</think>",
-        QRegularExpression::DotMatchesEverythingOption);
-    cleaned.remove(thinkRegex);
-    cleaned = cleaned.trimmed();
-    if (cleaned.startsWith("```")) {
-        int start = cleaned.indexOf('\n') + 1;
-        int end = cleaned.lastIndexOf("```");
-        if (end > start) cleaned = cleaned.mid(start, end - start).trimmed();
-    }
-
-    QJsonDocument doc = QJsonDocument::fromJson(cleaned.toUtf8());
-    if (!doc.isObject()) {
-        qDebug() << "LearningEngine: failed to parse plan JSON:" << cleaned.left(200);
+    QJsonDocument doc = LLMResponseParser::extractJsonObject(response, "LearningEngine");
+    if (doc.isNull()) {
         m_isProcessing = false;
         setPhase(Idle);
         return;

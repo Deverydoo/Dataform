@@ -1,5 +1,6 @@
 #include "traitextractor.h"
 #include "fuzzylogic.h"
+#include "llmresponseparser.h"
 #include "llmprovider.h"
 #include "memorystore.h"
 #include <QJsonDocument>
@@ -7,7 +8,6 @@
 #include <QJsonArray>
 #include <QRegularExpression>
 #include <QDebug>
-#include <QRandomGenerator>
 
 TraitExtractor::TraitExtractor(QObject *parent)
     : QObject(parent)
@@ -47,10 +47,16 @@ void TraitExtractor::setLLMProvider(LLMProviderManager *provider)
         connect(provider, &LLMProviderManager::backgroundResponseReceived,
                 this, [this](const QString &owner, const QString &response) {
             if (owner == "TraitExtractor") onExtractionResponse(response);
+            else if (owner == "LeanAnalyzer") onLeanAnalysisResponse(response);
         });
         connect(provider, &LLMProviderManager::backgroundErrorOccurred,
                 this, [this](const QString &owner, const QString &error) {
             if (owner == "TraitExtractor") onExtractionError(error);
+            else if (owner == "LeanAnalyzer") {
+                qWarning() << "LeanAnalyzer: LLM error:" << error;
+                m_isAnalyzingLean = false;
+                emit isAnalyzingLeanChanged();
+            }
         });
     }
 }
@@ -58,6 +64,16 @@ void TraitExtractor::setLLMProvider(LLMProviderManager *provider)
 void TraitExtractor::setMemoryStore(MemoryStore *store)
 {
     m_memoryStore = store;
+    if (store) {
+        QVariantMap latest = store->getLatestLeanForQml();
+        if (!latest.isEmpty()) {
+            m_leanScore = latest["leanScore"].toDouble();
+            m_leanAnalyzedTs = latest["analyzedTs"].toString();
+            emit leanScoreChanged();
+            emit leanLabelChanged();
+            emit leanAnalyzedTsChanged();
+        }
+    }
 }
 
 void TraitExtractor::setStatus(const QString &status)
@@ -210,13 +226,16 @@ QString TraitExtractor::buildConversationExtractionPrompt(qint64 conversationId)
     return QString(
         "Read this conversation and extract personality traits about the user.\n\n"
         "CONVERSATION:\n%1\n"
-        "From what the user said, what stable traits can you infer about them?\n\n"
+        "What does the user reveal about their personality, interests, opinions, or communication style?\n\n"
+        "GOOD trait examples: \"Thinks critically about government motives\", \"Prefers natural remedies over pharmaceuticals\", "
+        "\"Enjoys building complex software systems\", \"Communicates directly without softening\", \"Interested in herbalism and organic farming\"\n\n"
+        "BAD — do NOT extract:\n"
+        "- Things OTHER people think/say/feel that the user merely reports\n"
+        "- Fleeting emotional reactions (\"feels frustrated right now\")\n\n"
         "Respond with a JSON array:\n"
-        "[\n"
-        "  {\"type\": \"value\", \"statement\": \"description in third person\", \"confidence\": 0.7}\n"
-        "]\n\n"
+        "[{\"type\": \"value\", \"statement\": \"description in third person\", \"confidence\": 0.7}]\n\n"
         "Types: value (beliefs), preference (style/taste), policy (decision patterns), motivation (drives)\n"
-        "- Extract 1-5 traits\n"
+        "- Extract 1-5 traits. Be specific — capture what makes THIS user distinct.\n"
         "- Focus on what the USER reveals, not what the assistant says\n"
         "- Confidence: 0.3 weak, 0.5 moderate, 0.7 clear, 0.9 explicit\n"
         "- Third person (\"Values...\", \"Prefers...\", \"Tends to...\")\n"
@@ -246,10 +265,15 @@ QString TraitExtractor::buildEpisodeBatchPrompt(const QList<EpisodicRecord> &epi
     if (transcript.trimmed().isEmpty()) return QString();
 
     return QString(
-        "Extract 1-5 personality traits about the USER from these exchanges.\n\n"
+        "Extract personality traits about the USER from these exchanges.\n\n"
         "%1\n"
+        "What does the user reveal about their personality, interests, opinions, or communication style?\n\n"
+        "GOOD examples: \"Thinks critically about government motives\", \"Prefers hands-on building over theory\", "
+        "\"Interested in herbalism and organic farming\"\n"
+        "BAD — do NOT extract: things OTHER people think/say that the user merely reports, or fleeting emotions.\n\n"
         "Output a JSON array. Example: [{\"type\":\"value\",\"statement\":\"Values honesty\",\"confidence\":0.7}]\n"
-        "Types: value, preference, policy, motivation. Third person statements. Confidence 0.3-0.9.\n"
+        "Types: value, preference, policy, motivation. Third person. Confidence 0.3-0.9.\n"
+        "Extract 1-5 traits. Be specific — capture what makes THIS user distinct.\n"
         "IMPORTANT: Output ONLY the JSON array starting with [ and ending with ]. No other text."
     ).arg(transcript);
 }
@@ -338,9 +362,11 @@ void TraitExtractor::extractFromInquiryResponse(qint64 episodeId,
 
     QString prompt = QString(
         "User was asked: \"%1\"\nUser responded: \"%2\"\n\n"
-        "Extract 1-3 personality traits from the user's response.\n"
+        "What does this response reveal about the user's personality, interests, or opinions?\n"
+        "Do NOT extract things other people think/say that the user merely reports.\n\n"
         "Output a JSON array. Example: [{\"type\":\"motivation\",\"statement\":\"Values understanding over quick fixes\",\"confidence\":0.8}]\n"
-        "Types: value, preference, policy, motivation. Third person statements.\n"
+        "Types: value, preference, policy, motivation. Third person. Confidence 0.3-0.9.\n"
+        "Extract 1-3 traits. Be specific.\n"
         "IMPORTANT: Output ONLY the JSON array starting with [ and ending with ]. No other text."
     ).arg(inquiry, response);
 
@@ -405,6 +431,18 @@ void TraitExtractor::onExtractionResponse(const QString &response)
             if (!m_isExtracting) processNextConversation();
         });
     }
+
+    // Trigger lean re-analysis during idle if enough time has passed (once per hour)
+    if (!m_isAnalyzingLean && m_idleActive && !traits.isEmpty()) {
+        if (!m_lastLeanAnalysis.isValid() ||
+            m_lastLeanAnalysis.secsTo(QDateTime::currentDateTime()) > 3600) {
+            QTimer::singleShot(10000, this, [this]() {
+                if (m_idleActive && !m_isExtracting && !m_isAnalyzingLean) {
+                    analyzePoliticalLean();
+                }
+            });
+        }
+    }
 }
 
 void TraitExtractor::onExtractionError(const QString &error)
@@ -441,9 +479,11 @@ QString TraitExtractor::buildExtractionPrompt(const QString &userText,
     }
 
     prompt +=
-        "\nOutput a JSON array. Example: [{\"type\":\"value\",\"statement\":\"Values honesty\",\"confidence\":0.7}]\n"
-        "Types: value, preference, policy, motivation. Third person statements. Confidence 0.3-0.9.\n"
-        "Extract 0-3 traits. If nothing meaningful, return [].\n"
+        "\nWhat does this reveal about the user's personality, interests, opinions, or style?\n"
+        "Do NOT extract things other people think/say that the user merely reports.\n\n"
+        "Output a JSON array. Example: [{\"type\":\"value\",\"statement\":\"Values honesty\",\"confidence\":0.7}]\n"
+        "Types: value, preference, policy, motivation. Third person. Confidence 0.3-0.9.\n"
+        "Extract 1-3 traits. Be specific — capture what makes THIS user distinct.\n"
         "IMPORTANT: Output ONLY the JSON array starting with [ and ending with ]. No other text.";
 
     return prompt;
@@ -455,67 +495,8 @@ QList<ExtractedTrait> TraitExtractor::parseTraitsFromResponse(const QString &res
 {
     QList<ExtractedTrait> traits;
 
-    QString jsonStr = response.trimmed();
-
-    // Strip <think>...</think> reasoning blocks (qwen3 and other reasoning models)
-    // First: strip closed <think>...</think> pairs
-    static const QRegularExpression thinkRegex(
-        "<think>.*?</think>",
-        QRegularExpression::DotMatchesEverythingOption);
-    jsonStr.remove(thinkRegex);
-    // Second: strip unclosed <think> tags (model didn't close the tag)
-    int thinkStart = jsonStr.indexOf("<think>");
-    if (thinkStart >= 0) {
-        // Everything from <think> to end is reasoning — take only what's before it
-        // unless there's a JSON array before the think tag
-        QString beforeThink = jsonStr.left(thinkStart).trimmed();
-        if (beforeThink.contains('[')) {
-            jsonStr = beforeThink;
-        } else {
-            // No JSON before think — discard the think block entirely
-            jsonStr.remove(thinkStart, jsonStr.length() - thinkStart);
-        }
-        qDebug() << "TraitExtractor: stripped unclosed <think> tag";
-    }
-    jsonStr = jsonStr.trimmed();
-
-    // Strip markdown code fences if present
-    if (jsonStr.startsWith("```")) {
-        int firstNewline = jsonStr.indexOf('\n');
-        int lastFence = jsonStr.lastIndexOf("```");
-        if (firstNewline >= 0 && lastFence > firstNewline) {
-            jsonStr = jsonStr.mid(firstNewline + 1, lastFence - firstNewline - 1).trimmed();
-        }
-    }
-
-    qDebug() << "TraitExtractor: cleaned response (" << jsonStr.length() << "chars):"
-             << jsonStr.left(300);
-
-    // Find the JSON array bounds
-    int start = jsonStr.indexOf('[');
-    int end = jsonStr.lastIndexOf(']');
-    if (start < 0 || end < 0 || end <= start) {
-        qDebug() << "TraitExtractor: NO JSON array brackets found in cleaned response";
-        qDebug() << "TraitExtractor: full cleaned response:" << jsonStr;
-        return traits;
-    }
-
-    jsonStr = jsonStr.mid(start, end - start + 1);
-
-    QJsonParseError parseError;
-    QJsonDocument doc = QJsonDocument::fromJson(jsonStr.toUtf8(), &parseError);
-
-    if (parseError.error != QJsonParseError::NoError) {
-        qWarning() << "TraitExtractor: JSON parse error:" << parseError.errorString()
-                   << "at offset:" << parseError.offset
-                   << "in:" << jsonStr.left(500);
-        return traits;
-    }
-
-    if (!doc.isArray()) {
-        qWarning() << "TraitExtractor: expected JSON array";
-        return traits;
-    }
+    QJsonDocument doc = LLMResponseParser::extractJsonArray(response, "TraitExtractor");
+    if (doc.isNull()) return traits;
 
     QJsonArray arr = doc.array();
     qDebug() << "TraitExtractor: parsed JSON array with" << arr.size() << "elements";
@@ -551,28 +532,42 @@ void TraitExtractor::storeExtractedTraits(const QList<ExtractedTrait> &traits,
 {
     if (!m_memoryStore) return;
 
+    QList<TraitRecord> allTraits = m_memoryStore->getAllTraits();
+
     for (const ExtractedTrait &trait : traits) {
-        // Check for duplicate/similar existing traits
-        if (isDuplicateTrait(trait.statement)) {
-            qDebug() << "TraitExtractor: skipping duplicate trait:" << trait.statement;
-            QList<TraitRecord> existing = m_memoryStore->getTraitsByType(trait.type);
-            for (const TraitRecord &e : existing) {
-                double similarity = traitSimilarity(e.statement, trait.statement);
-                double mergeProbability = Fuzzy::sigmoid(similarity, 0.6, 0.08);
-                if (QRandomGenerator::global()->generateDouble() < mergeProbability) {
-                    mergeWithExistingTrait(e.traitId, trait, episodeId);
-                    break;
-                }
+        // Find the most similar existing trait (deterministic best-match)
+        QString bestMatchId;
+        double bestSimilarity = 0.0;
+        for (const TraitRecord &e : allTraits) {
+            double similarity = traitSimilarity(e.statement, trait.statement);
+            if (similarity > bestSimilarity) {
+                bestSimilarity = similarity;
+                bestMatchId = e.traitId;
             }
+        }
+
+        if (bestSimilarity >= 0.55) {
+            // True duplicate — merge evidence into the existing trait
+            mergeWithExistingTrait(bestMatchId, trait, episodeId);
+            qDebug() << "TraitExtractor: merged duplicate trait (similarity:"
+                     << bestSimilarity << "):" << trait.statement;
             continue;
         }
 
-        // Insert as new trait
+        // New unique trait — insert it
         QString traitId = m_memoryStore->insertTrait(trait.type, trait.statement, trait.confidence);
         if (!traitId.isEmpty()) {
             if (episodeId >= 0) {
                 m_memoryStore->addTraitEvidence(traitId, episodeId);
             }
+            // Add to our local list so subsequent traits in this batch can dedup against it
+            TraitRecord newRecord;
+            newRecord.traitId = traitId;
+            newRecord.type = trait.type;
+            newRecord.statement = trait.statement;
+            newRecord.confidence = trait.confidence;
+            allTraits.append(newRecord);
+
             qDebug() << "TraitExtractor: stored new trait:" << trait.statement
                      << "type:" << trait.type << "confidence:" << trait.confidence;
         }
@@ -598,13 +593,34 @@ double TraitExtractor::traitSimilarity(const QString &a, const QString &b) const
 
     if (wordsA.isEmpty() || wordsB.isEmpty()) return 0.0;
 
+    // Exact matches
     QSet<QString> intersection = wordsA;
     intersection.intersect(wordsB);
 
+    // Fuzzy prefix matches (catches creation/creator, concept/concepts, value/values)
+    QSet<QString> unmatchedA = wordsA - intersection;
+    QSet<QString> unmatchedB = wordsB - intersection;
+    int fuzzyMatches = 0;
+    for (const QString &wa : unmatchedA) {
+        for (const QString &wb : unmatchedB) {
+            int prefixLen = 0;
+            int minLen = qMin(wa.length(), wb.length());
+            for (int i = 0; i < minLen; ++i) {
+                if (wa[i] == wb[i]) ++prefixLen;
+                else break;
+            }
+            if (prefixLen >= 5) {
+                ++fuzzyMatches;
+                break;
+            }
+        }
+    }
+
+    int matchCount = intersection.size() + fuzzyMatches;
     QSet<QString> unionSet = wordsA;
     unionSet.unite(wordsB);
 
-    return static_cast<double>(intersection.size()) / static_cast<double>(unionSet.size());
+    return static_cast<double>(matchCount) / static_cast<double>(unionSet.size());
 }
 
 bool TraitExtractor::isDuplicateTrait(const QString &statement) const
@@ -615,8 +631,7 @@ bool TraitExtractor::isDuplicateTrait(const QString &statement) const
 
     for (const TraitRecord &existing : allTraits) {
         double similarity = traitSimilarity(existing.statement, statement);
-        double dupProbability = Fuzzy::sigmoid(similarity, 0.6, 0.08);
-        if (QRandomGenerator::global()->generateDouble() < dupProbability) {
+        if (similarity >= 0.55) {
             return true;
         }
     }
@@ -633,7 +648,9 @@ void TraitExtractor::mergeWithExistingTrait(const QString &existingTraitId,
     TraitRecord existing = m_memoryStore->getTrait(existingTraitId);
 
     int evidenceCount = existing.evidenceEpisodeIds.size();
-    double boostFactor = 0.1 * Fuzzy::decay(0.7, static_cast<double>(evidenceCount));
+    // Gentler diminishing returns: 0.85^n decays slower than 0.7^n
+    // so each re-detection still meaningfully increases confidence
+    double boostFactor = 0.12 * Fuzzy::decay(0.85, static_cast<double>(evidenceCount));
     double newConfidence = existing.confidence + (1.0 - existing.confidence) * boostFactor;
     newConfidence = qMin(0.95, newConfidence);
 
@@ -643,4 +660,125 @@ void TraitExtractor::mergeWithExistingTrait(const QString &existingTraitId,
 
     qDebug() << "TraitExtractor: merged evidence into existing trait"
              << existingTraitId << "confidence:" << existing.confidence << "->" << newConfidence;
+}
+
+// --- Political Lean Analysis ---
+
+QString TraitExtractor::leanLabel() const
+{
+    return leanScoreToLabel(m_leanScore);
+}
+
+QString TraitExtractor::leanScoreToLabel(double score) const
+{
+    if (score <= -0.6) return QStringLiteral("Left");
+    if (score <= -0.2) return QStringLiteral("Lean Left");
+    if (score <= 0.2)  return QStringLiteral("Center");
+    if (score <= 0.6)  return QStringLiteral("Lean Right");
+    return QStringLiteral("Right");
+}
+
+void TraitExtractor::analyzePoliticalLean()
+{
+    if (!m_llmProvider || !m_memoryStore) return;
+    if (m_isAnalyzingLean) return;
+
+    // Gather all "value" and "policy" type traits
+    QList<TraitRecord> valueTraits = m_memoryStore->getTraitsByType("value");
+    QList<TraitRecord> policyTraits = m_memoryStore->getTraitsByType("policy");
+
+    QList<TraitRecord> allRelevant;
+    allRelevant.append(valueTraits);
+    allRelevant.append(policyTraits);
+
+    // Build trait list, filtering low-confidence ones
+    QString traitList;
+    for (const TraitRecord &t : allRelevant) {
+        if (t.confidence < 0.3) continue;
+        traitList += QString("- [%1] %2 (confidence: %3)\n")
+                         .arg(t.type, t.statement)
+                         .arg(t.confidence, 0, 'f', 2);
+    }
+
+    if (traitList.isEmpty()) {
+        setStatus("Need value/policy traits with confidence >= 0.3 for lean analysis");
+        return;
+    }
+
+    // Count qualifying traits
+    int qualifyingCount = 0;
+    for (const TraitRecord &t : allRelevant) {
+        if (t.confidence >= 0.3) qualifyingCount++;
+    }
+    if (qualifyingCount < 3) {
+        setStatus(QString("Need at least 3 value/policy traits for lean analysis (have %1)")
+                      .arg(qualifyingCount));
+        return;
+    }
+
+    m_isAnalyzingLean = true;
+    emit isAnalyzingLeanChanged();
+
+    QString prompt = QString(
+        "Analyze the following personal values and policy positions on the standard "
+        "US political spectrum. Rate them from -1.0 (strong left/liberal/progressive) "
+        "to +1.0 (strong right/conservative/traditional).\n\n"
+        "TRAITS:\n%1\n"
+        "Consider each trait's position individually, then weight by confidence to "
+        "produce an overall score.\n\n"
+        "Output a JSON object:\n"
+        "{\"score\": 0.0, \"reasoning\": \"brief explanation\"}\n\n"
+        "Score guide: -1.0=far left, -0.5=lean left, 0.0=center, +0.5=lean right, +1.0=far right\n"
+        "IMPORTANT: Output ONLY the JSON object. No other text."
+    ).arg(traitList);
+
+    QJsonArray messages;
+    QJsonObject msg;
+    msg["role"] = "user";
+    msg["content"] = prompt;
+    messages.append(msg);
+
+    m_llmProvider->sendBackgroundRequest(
+        "LeanAnalyzer",
+        "You are a JSON-only political analysis API. You output valid JSON and nothing else. "
+        "Be objective and analytical. Rate positions, not people.",
+        messages
+    );
+
+    qDebug() << "LeanAnalyzer: analyzing" << qualifyingCount << "value/policy traits";
+}
+
+void TraitExtractor::onLeanAnalysisResponse(const QString &response)
+{
+    m_isAnalyzingLean = false;
+    emit isAnalyzingLeanChanged();
+
+    QJsonDocument doc = LLMResponseParser::extractJsonObject(response, "LeanAnalyzer");
+    if (doc.isNull()) return;
+
+    QJsonObject obj = doc.object();
+    double score = qBound(-1.0, obj.value("score").toDouble(0.0), 1.0);
+
+    // Collect contributing trait IDs
+    QList<TraitRecord> valueTraits = m_memoryStore->getTraitsByType("value");
+    QList<TraitRecord> policyTraits = m_memoryStore->getTraitsByType("policy");
+    QStringList traitIds;
+    for (const TraitRecord &t : valueTraits) traitIds.append(t.traitId);
+    for (const TraitRecord &t : policyTraits) traitIds.append(t.traitId);
+
+    // Store in DB
+    m_memoryStore->insertLeanAnalysis(score, traitIds);
+
+    // Update cached values
+    m_leanScore = score;
+    m_leanAnalyzedTs = QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss");
+    m_lastLeanAnalysis = QDateTime::currentDateTime();
+    emit leanScoreChanged();
+    emit leanLabelChanged();
+    emit leanAnalyzedTsChanged();
+    emit leanAnalysisComplete(score);
+
+    QString reasoning = obj.value("reasoning").toString();
+    qDebug() << "LeanAnalyzer: score=" << score << "label=" << leanScoreToLabel(score)
+             << "reasoning:" << reasoning.left(200);
 }

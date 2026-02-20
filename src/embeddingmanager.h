@@ -49,6 +49,13 @@ public:
         const QStringList &sourceTypes,
         int topK = 5) const;
 
+    // Async search — offloads cosine similarity to BackgroundJobManager,
+    // delivers results via semanticSearchComplete signal.
+    void semanticSearchAsync(
+        const QVector<float> &queryEmbedding,
+        const QStringList &sourceTypes,
+        int topK = 5);
+
     // Check if embedding model is reachable
     bool isModelAvailable() const { return m_modelAvailable; }
 
@@ -71,6 +78,7 @@ signals:
     void embeddingReady(const QString &requestTag, QVector<float> embedding);
     void embeddingError(const QString &requestTag, const QString &error);
     void batchEmbeddingComplete(int count);
+    void semanticSearchComplete(QList<SemanticSearchResult> results);
 
 private slots:
     void onNetworkReply(QNetworkReply *reply);

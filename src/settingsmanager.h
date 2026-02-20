@@ -36,6 +36,7 @@ class SettingsManager : public QObject
     Q_PROPERTY(bool newsEnabled READ newsEnabled WRITE setNewsEnabled NOTIFY newsEnabledChanged)
     Q_PROPERTY(int maxNewsPerDay READ maxNewsPerDay WRITE setMaxNewsPerDay NOTIFY maxNewsPerDayChanged)
     Q_PROPERTY(QStringList newsFeeds READ newsFeeds WRITE setNewsFeeds NOTIFY newsFeedsChanged)
+    Q_PROPERTY(QStringList siteBlacklist READ siteBlacklist WRITE setSiteBlacklist NOTIFY siteBlacklistChanged)
     // Agentic features settings
     Q_PROPERTY(bool goalsEnabled READ goalsEnabled WRITE setGoalsEnabled NOTIFY goalsEnabledChanged)
     Q_PROPERTY(bool sentimentTrackingEnabled READ sentimentTrackingEnabled WRITE setSentimentTrackingEnabled NOTIFY sentimentTrackingEnabledChanged)
@@ -48,6 +49,12 @@ class SettingsManager : public QObject
     // Phase 7: Semantic Memory settings
     Q_PROPERTY(QString embeddingModel READ embeddingModel WRITE setEmbeddingModel NOTIFY embeddingModelChanged)
     Q_PROPERTY(bool semanticSearchEnabled READ semanticSearchEnabled WRITE setSemanticSearchEnabled NOTIFY semanticSearchEnabledChanged)
+    // Background model (llama.cpp)
+    Q_PROPERTY(bool backgroundModelEnabled READ backgroundModelEnabled WRITE setBackgroundModelEnabled NOTIFY backgroundModelEnabledChanged)
+    Q_PROPERTY(QString backgroundModelPath READ backgroundModelPath WRITE setBackgroundModelPath NOTIFY backgroundModelPathChanged)
+    // Phase 8: Distillation settings
+    Q_PROPERTY(bool distillationEnabled READ distillationEnabled WRITE setDistillationEnabled NOTIFY distillationEnabledChanged)
+    Q_PROPERTY(int distillationDailyCycles READ distillationDailyCycles WRITE setDistillationDailyCycles NOTIFY distillationDailyCyclesChanged)
     // Security settings
     Q_PROPERTY(QString encryptionMode READ encryptionMode WRITE setEncryptionMode NOTIFY encryptionModeChanged)
 
@@ -125,6 +132,12 @@ public:
     Q_INVOKABLE void addNewsFeed(const QString &url);
     Q_INVOKABLE void removeNewsFeed(int index);
 
+    // Site blacklist
+    QStringList siteBlacklist() const { return m_siteBlacklist; }
+    void setSiteBlacklist(const QStringList &list);
+    Q_INVOKABLE void addBlacklistedSite(const QString &domain);
+    Q_INVOKABLE void removeBlacklistedSite(const QString &domain);
+
     // Agentic features
     bool goalsEnabled() const { return m_goalsEnabled; }
     void setGoalsEnabled(bool enabled);
@@ -148,6 +161,18 @@ public:
     void setEmbeddingModel(const QString &model);
     bool semanticSearchEnabled() const { return m_semanticSearchEnabled; }
     void setSemanticSearchEnabled(bool enabled);
+
+    // Background model (llama.cpp)
+    bool backgroundModelEnabled() const { return m_backgroundModelEnabled; }
+    void setBackgroundModelEnabled(bool enabled);
+    QString backgroundModelPath() const { return m_backgroundModelPath; }
+    void setBackgroundModelPath(const QString &path);
+
+    // Phase 8: Distillation
+    bool distillationEnabled() const { return m_distillationEnabled; }
+    void setDistillationEnabled(bool enabled);
+    int distillationDailyCycles() const { return m_distillationDailyCycles; }
+    void setDistillationDailyCycles(int cycles);
 
     // Security
     QString encryptionMode() const { return m_encryptionMode; }
@@ -179,6 +204,7 @@ signals:
     void newsEnabledChanged();
     void maxNewsPerDayChanged();
     void newsFeedsChanged();
+    void siteBlacklistChanged();
     void goalsEnabledChanged();
     void sentimentTrackingEnabledChanged();
     void teachMeEnabledChanged();
@@ -187,6 +213,10 @@ signals:
     void modelContextLengthChanged();
     void embeddingModelChanged();
     void semanticSearchEnabledChanged();
+    void backgroundModelEnabledChanged();
+    void backgroundModelPathChanged();
+    void distillationEnabledChanged();
+    void distillationDailyCyclesChanged();
     void encryptionModeChanged();
     void settingsSaved();
     void settingsLoaded();
@@ -216,6 +246,7 @@ private:
     bool m_newsEnabled = true;
     int m_maxNewsPerDay = 3;
     QStringList m_newsFeeds = {"https://www.allsides.com/rss/news"};
+    QStringList m_siteBlacklist;
     bool m_goalsEnabled = true;
     bool m_sentimentTrackingEnabled = true;
     bool m_teachMeEnabled = true;
@@ -224,6 +255,10 @@ private:
     int m_modelContextLength = 8192;
     QString m_embeddingModel = "nomic-embed-text";
     bool m_semanticSearchEnabled = true;
+    bool m_backgroundModelEnabled = false;
+    QString m_backgroundModelPath = "models/background_llm";
+    bool m_distillationEnabled = false;
+    int m_distillationDailyCycles = 3;
     QString m_encryptionMode = "portable";
 };
 

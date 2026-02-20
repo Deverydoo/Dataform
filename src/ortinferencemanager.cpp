@@ -49,8 +49,11 @@ bool OrtInferenceManager::loadModel(const QString &onnxPath)
         // Load model
         auto newSession = std::make_unique<Ort::Session>(*m_env, onnxPath.toStdWString().c_str(), opts);
 
-        // Swap in the new session (hot-swap safe)
-        m_session = std::move(newSession);
+        // Swap in the new session (write-lock protects against background read)
+        {
+            QWriteLocker lock(m_sessionGuard.rwLock());
+            m_session = std::move(newSession);
+        }
         m_modelPath = onnxPath;
 
         qDebug() << "[OrtInference] Model loaded:" << onnxPath;
@@ -66,7 +69,10 @@ bool OrtInferenceManager::loadModel(const QString &onnxPath)
 
 void OrtInferenceManager::unloadModel()
 {
-    m_session.reset();
+    {
+        QWriteLocker lock(m_sessionGuard.rwLock());
+        m_session.reset();
+    }
     m_modelPath.clear();
     emit isModelLoadedChanged();
     emit modelPathChanged();
@@ -153,6 +159,8 @@ std::vector<int64_t> OrtInferenceManager::buildPromptTokens(const QString &syste
 int64_t OrtInferenceManager::sampleToken(const float *logits, int vocabSize,
                                           float temperature, int topK, float topP)
 {
+    if (vocabSize <= 0) return 0; // no vocab = return token 0 (safety)
+
     // Create index-probability pairs
     std::vector<std::pair<float, int64_t>> logitPairs(vocabSize);
     for (int i = 0; i < vocabSize; ++i) {
@@ -216,6 +224,17 @@ void OrtInferenceManager::generationLoop(std::vector<int64_t> promptTokens,
                                           int maxNewTokens, float temperature,
                                           int topK, float topP)
 {
+    // Acquire read-lock for duration of generation — prevents model hot-swap mid-generation
+    QReadLocker sessionLock(m_sessionGuard.rwLock());
+    if (!m_session) {
+        QMetaObject::invokeMethod(this, [this]() {
+            m_isGenerating.storeRelaxed(0);
+            emit isGeneratingChanged();
+            emit generationError("Session unloaded during generation");
+        }, Qt::QueuedConnection);
+        return;
+    }
+
     QString generatedText;
     std::vector<int64_t> currentTokens = std::move(promptTokens);
     int eosId = m_tokenizer->eosTokenId();

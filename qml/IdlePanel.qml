@@ -502,6 +502,73 @@ Rectangle {
             color: "#3e3e42"
         }
 
+        // === Distillation Activity (Phase 8) ===
+        ColumnLayout {
+            Layout.fillWidth: true
+            spacing: 6
+
+            RowLayout {
+                spacing: 6
+                Layout.fillWidth: true
+
+                Rectangle {
+                    width: 8; height: 8; radius: 4
+                    color: distillationManager.isDistilling ? "#c586c0" : "#3e3e42"
+
+                    SequentialAnimation on opacity {
+                        running: distillationManager.isDistilling
+                        loops: Animation.Infinite
+                        NumberAnimation { to: 0.3; duration: 800; easing.type: Easing.InOutSine }
+                        NumberAnimation { to: 1.0; duration: 800; easing.type: Easing.InOutSine }
+                    }
+                }
+
+                Label {
+                    text: distillationManager.isDistilling
+                          ? "Distillation: " + distillationManager.currentPhase
+                          : "Distillation: Idle"
+                    font.pixelSize: 12
+                    font.bold: true
+                    color: distillationManager.isDistilling ? "#c586c0" : "#888888"
+                }
+            }
+
+            // Stats row
+            RowLayout {
+                spacing: 12
+                Layout.fillWidth: true
+
+                Label {
+                    text: "Pairs: " + distillationManager.pairsCollected
+                    font.pixelSize: 11
+                    color: distillationManager.pairsCollected > 0 ? "#c586c0" : "#666666"
+                }
+                Label {
+                    text: "Readiness: " + (distillationManager.readinessScore * 100).toFixed(0) + "%"
+                    font.pixelSize: 11
+                    color: distillationManager.readinessScore >= 0.75 ? "#4ec9b0"
+                         : distillationManager.readinessScore >= 0.5 ? "#c586c0" : "#666666"
+                }
+            }
+
+            // Status message
+            Label {
+                text: distillationManager.statusMessage
+                font.pixelSize: 11
+                color: "#888888"
+                Layout.fillWidth: true
+                wrapMode: Text.WordWrap
+                visible: distillationManager.statusMessage !== ""
+            }
+        }
+
+        // Separator
+        Rectangle {
+            Layout.fillWidth: true
+            height: 1
+            color: "#3e3e42"
+        }
+
         // Thought generation status
         RowLayout {
             spacing: 6

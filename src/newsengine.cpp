@@ -1,4 +1,5 @@
 #include "newsengine.h"
+#include "llmresponseparser.h"
 #include "memorystore.h"
 #include "thoughtengine.h"
 #include "llmprovider.h"
@@ -338,14 +339,40 @@ void NewsEngine::phaseSelectInteresting()
         }
     }
 
+    // Graduated lean balancing: light nudge at |0.3|, stronger at |0.6|
+    QString leanHint;
+    if (m_memoryStore) {
+        QVariantMap lean = m_memoryStore->getLatestLeanForQml();
+        if (!lean.isEmpty()) {
+            double score = lean["leanScore"].toDouble();
+            double absScore = qAbs(score);
+            QString direction = score < 0 ? "left" : "right";
+            QString opposite = score < 0 ? "center or right-of-center" : "center or left-of-center";
+            if (absScore > 0.6) {
+                leanHint = QString(
+                    "\nBalance note: The user's views lean strongly %1. "
+                    "Prioritize including headlines with %2 perspectives "
+                    "to broaden their information exposure.\n"
+                ).arg(direction, opposite);
+            } else if (absScore > 0.3) {
+                leanHint = QString(
+                    "\nBalance note: The user's views lean slightly %1. "
+                    "When possible, include a headline with %2 perspectives "
+                    "for balance.\n"
+                ).arg(direction, opposite);
+            }
+        }
+    }
+
     QString prompt = QString(
         "Headlines:\n%1\n"
-        "User interests:\n%2\n"
+        "User interests:\n%2\n%3"
         "Pick 1-2 headlines most interesting to this user.\n"
         "Output a JSON object. Example: {\"selected\":[1,5]}\n"
         "IMPORTANT: Output ONLY the JSON object starting with { and ending with }. No other text."
     ).arg(headlineList,
-          traitContext.isEmpty() ? "(no traits known yet)" : traitContext);
+          traitContext.isEmpty() ? "(no traits known yet)" : traitContext,
+          leanHint);
 
     QJsonArray msgs;
     QJsonObject msg;
@@ -382,13 +409,20 @@ void NewsEngine::phaseGenerateThought()
 
     QString prompt = QString(
         "News headline: \"%1\"\n"
-        "Source: RSS news feed\n"
-        "Known user interests:\n%2\n\n"
-        "Write a brief, conversational opener (2-3 sentences) to start a "
-        "discussion about this headline with the user. Be curious and "
-        "inviting, not preachy. Ask the user what they think.\n"
-        "Respond ONLY with the conversation opener text, nothing else."
+        "Summary: %2\n\n"
+        "User interests (for your eyes only — do NOT mention these directly):\n%3\n\n"
+        "Write a casual 2-3 sentence message sharing this article, like texting a friend.\n"
+        "- Start casually: \"Hey, I came across...\" or \"Found this article about...\"\n"
+        "- Pick out 1-2 SPECIFIC details from the article that would appeal to the user's interests\n"
+        "- Mention those specific details naturally, not the user's interests themselves\n"
+        "- Do NOT say \"because you're interested in X\" or \"for someone who values Y\"\n"
+        "- Do NOT write a formal summary or multiple paragraphs\n\n"
+        "Good example: \"Hey, found this article on pickling sunchokes — it has a garlic-heavy recipe "
+        "and a kimchi-style one that looked pretty good.\"\n"
+        "Bad example: \"For someone who values self-awareness, this article about politics...\"\n\n"
+        "Respond ONLY with the message text, nothing else."
     ).arg(headline.title,
+          headline.description.isEmpty() ? headline.title : headline.description,
           traitContext.isEmpty() ? "(none yet)" : traitContext);
 
     m_llmProvider->sendBackgroundPrompt("NewsEngine", prompt, LLMProviderManager::PriorityLow);
@@ -409,28 +443,14 @@ void NewsEngine::onLLMResponse(const QString &response)
 {
     m_consecutiveErrors = 0;  // Reset on any successful LLM response
 
-    // Strip <think>...</think> reasoning blocks (qwen3 and other reasoning models)
-    static const QRegularExpression thinkRegex(
-        "<think>.*?</think>",
-        QRegularExpression::DotMatchesEverythingOption);
-    QString cleanedResponse = response;
-    cleanedResponse.remove(thinkRegex);
-    cleanedResponse = cleanedResponse.trimmed();
+    QString cleanedResponse = LLMResponseParser::stripThinkTags(response);
 
     if (m_phase == SelectInteresting) {
         // Parse JSON to get selected headline indices
         m_selectedHeadlines.clear();
 
-        QString jsonStr = cleanedResponse;
-        // Extract JSON if wrapped in markdown code block
-        static QRegularExpression jsonExtract("\\{[^}]*\"selected\"[^}]*\\}");
-        QRegularExpressionMatch match = jsonExtract.match(jsonStr);
-        if (match.hasMatch()) {
-            jsonStr = match.captured(0);
-        }
-
-        QJsonDocument doc = QJsonDocument::fromJson(jsonStr.toUtf8());
-        if (doc.isObject()) {
+        QJsonDocument doc = LLMResponseParser::extractJsonObject(cleanedResponse, "NewsEngine");
+        if (!doc.isNull()) {
             QJsonArray selected = doc.object().value("selected").toArray();
             for (const QJsonValue &v : selected) {
                 int idx = v.toInt() - 1; // 1-indexed -> 0-indexed
@@ -464,7 +484,9 @@ void NewsEngine::onLLMResponse(const QString &response)
             record.sourceType = "news";
             record.priority = 0.7;
             record.title = headline.title;
-            record.content = cleanedResponse;
+            record.content = headline.url.isEmpty()
+                ? cleanedResponse
+                : cleanedResponse + "\n\n[Read the full article](" + headline.url + ")";
             record.generatedBy = "news_cycle";
 
             m_thoughtEngine->insertThought(record);

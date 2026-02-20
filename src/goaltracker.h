@@ -3,7 +3,7 @@
 
 #include <QObject>
 #include <QString>
-#include <QSet>
+#include <QList>
 #include <QDate>
 #include <QDateTime>
 
@@ -65,7 +65,7 @@ private:
     Phase m_phase = Idle;
     int m_activeGoalCount = 0;
 
-    QSet<qint64> m_scannedEpisodeIds;
+    QList<qint64> m_scannedEpisodeIds;
     qint64 m_currentCheckinGoalId = -1;
     QString m_currentCheckinGoalTitle;
 

@@ -230,7 +230,7 @@ QString ThoughtEngine::buildOpeningMessage(qint64 thoughtId)
         opening = QString("Something has been on my mind that I'm curious about. %1\n\n%2")
                       .arg(title, content);
     } else if (type == "news_insight") {
-        opening = QString("I noticed something interesting in the news. %1\n\n%2")
+        opening = QString("I found something interesting in the news: **%1**\n\n%2")
                       .arg(title, content);
     } else if (type == "evolution_observation" || type == "training_observation") {
         opening = QString("I noticed something interesting during my training. %1\n\n%2")

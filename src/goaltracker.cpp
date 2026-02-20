@@ -1,4 +1,5 @@
 #include "goaltracker.h"
+#include "llmresponseparser.h"
 #include "memorystore.h"
 #include "llmprovider.h"
 #include "thoughtengine.h"
@@ -7,7 +8,6 @@
 #include <QJsonDocument>
 #include <QJsonArray>
 #include <QJsonObject>
-#include <QRegularExpression>
 #include <QTimer>
 
 GoalTracker::GoalTracker(QObject *parent)
@@ -123,7 +123,7 @@ void GoalTracker::phaseDetectGoals()
         if (m_scannedEpisodeIds.contains(ep.id)) continue;
         if (!ep.userText.isEmpty()) {
             userMessages.append(ep.userText.left(200));
-            m_scannedEpisodeIds.insert(ep.id);
+            m_scannedEpisodeIds.append(ep.id);
         }
     }
 
@@ -132,9 +132,9 @@ void GoalTracker::phaseDetectGoals()
         return;
     }
 
-    // Keep scanned set bounded
+    // Keep scanned list bounded (FIFO eviction preserves insertion order)
     while (m_scannedEpisodeIds.size() > 200) {
-        m_scannedEpisodeIds.erase(m_scannedEpisodeIds.begin());
+        m_scannedEpisodeIds.removeFirst();
     }
 
     QString prompt = QString(
@@ -174,11 +174,25 @@ void GoalTracker::phaseGenerateCheckin()
     m_currentCheckinGoalId = goal.id;
     m_currentCheckinGoalTitle = goal.title;
 
+    // Calculate how long ago the goal was created
+    qint64 daysAgo = goal.createdTs.daysTo(QDateTime::currentDateTime());
+    QString timeDesc;
+    if (daysAgo < 1)
+        timeDesc = "earlier today";
+    else if (daysAgo == 1)
+        timeDesc = "yesterday";
+    else if (daysAgo < 7)
+        timeDesc = QString("%1 days ago").arg(daysAgo);
+    else if (daysAgo < 30)
+        timeDesc = QString("about %1 week%2 ago").arg(daysAgo / 7).arg(daysAgo / 7 > 1 ? "s" : "");
+    else
+        timeDesc = QString("about %1 month%2 ago").arg(daysAgo / 30).arg(daysAgo / 30 > 1 ? "s" : "");
+
     ThoughtRecord thought;
     thought.type = "goal_checkin";
     thought.title = QString("Checking in: %1").arg(goal.title);
-    thought.content = QString("You mentioned \"%1\" a while ago. How's that going? "
-                              "I'd love to hear about your progress.").arg(goal.title);
+    thought.content = QString("You mentioned \"%1\" %2. How's that going? "
+                              "I'd love to hear about your progress.").arg(goal.title, timeDesc);
     thought.priority = 0.75;
     thought.sourceType = "goal";
     thought.sourceId = goal.id;
@@ -196,26 +210,11 @@ void GoalTracker::onLLMResponse(const QString &response)
 {
     m_consecutiveErrors = 0;  // Reset on any successful LLM response
 
-    if (m_phase != DetectGoals) return;
+    if (m_phase != DetectGoals || !m_memoryStore) return;
 
     // Parse JSON array of goals
-    QString cleaned = response.trimmed();
-    // Strip <think>...</think> reasoning blocks (qwen3 and other reasoning models)
-    static const QRegularExpression thinkRegex(
-        "<think>.*?</think>",
-        QRegularExpression::DotMatchesEverythingOption);
-    cleaned.remove(thinkRegex);
-    cleaned = cleaned.trimmed();
-    // Strip markdown fences
-    if (cleaned.startsWith("```")) {
-        int start = cleaned.indexOf('\n') + 1;
-        int end = cleaned.lastIndexOf("```");
-        if (end > start) cleaned = cleaned.mid(start, end - start).trimmed();
-    }
-
-    QJsonDocument doc = QJsonDocument::fromJson(cleaned.toUtf8());
-    if (!doc.isArray()) {
-        qDebug() << "GoalTracker: LLM response not a JSON array, skipping";
+    QJsonDocument doc = LLMResponseParser::extractJsonArray(response, "GoalTracker");
+    if (doc.isNull()) {
         advancePhase();
         return;
     }

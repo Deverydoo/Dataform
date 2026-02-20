@@ -388,6 +388,22 @@ bool MemoryStore::updateEpisodeOutcome(qint64 episodeId,
     return query.numRowsAffected() > 0;
 }
 
+bool MemoryStore::updateEpisodeTags(qint64 episodeId, const QString &tags)
+{
+    if (!m_initialized) return false;
+
+    QSqlQuery query(m_episodicDb);
+    query.prepare("UPDATE episodes SET tags = :tags WHERE id = :id");
+    query.bindValue(":tags", tags);
+    query.bindValue(":id", episodeId);
+
+    if (!query.exec()) {
+        qWarning() << "Update tags failed:" << query.lastError().text();
+        return false;
+    }
+    return query.numRowsAffected() > 0;
+}
+
 EpisodicRecord MemoryStore::getEpisode(qint64 id) const
 {
     EpisodicRecord record;
@@ -854,6 +870,12 @@ QVariantMap MemoryStore::traitToVariantMap(const TraitRecord &record) const
     map["evidenceCount"] = record.evidenceEpisodeIds.size();
     map["lastConfirmed"] = record.lastConfirmedTs.toString("yyyy-MM-dd HH:mm:ss");
     map["created"] = record.createdTs.toString("yyyy-MM-dd HH:mm:ss");
+    map["isValueOrPolicy"] = (record.type == "value" || record.type == "policy");
+    int ec = record.evidenceEpisodeIds.size();
+    if (ec >= 10) map["weightTier"] = QString("strong");
+    else if (ec >= 5) map["weightTier"] = QString("moderate");
+    else if (ec >= 2) map["weightTier"] = QString("emerging");
+    else map["weightTier"] = QString("new");
     return map;
 }
 
@@ -1278,6 +1300,39 @@ bool MemoryStore::migrateEpisodicSchema()
         }
     });
 
+    // Phase 8: Distillation tables
+    migrations.append({8, 9, "Create distillation tables for personalized distillation",
+        [](QSqlDatabase &db) -> bool {
+            QSqlQuery q(db);
+            bool ok = q.exec(
+                "CREATE TABLE IF NOT EXISTS distillation_pairs ("
+                "  id              INTEGER PRIMARY KEY AUTOINCREMENT,"
+                "  user_prompt     TEXT NOT NULL,"
+                "  teacher_response TEXT NOT NULL,"
+                "  system_context  TEXT DEFAULT '',"
+                "  source_episode_id INTEGER DEFAULT -1,"
+                "  source_type     TEXT DEFAULT 'episode',"
+                "  quality_score   REAL DEFAULT 0.0,"
+                "  used_in_training INTEGER DEFAULT 0,"
+                "  created_ts      TEXT NOT NULL DEFAULT (datetime('now'))"
+                ")");
+            if (!ok) return false;
+            q.exec("CREATE INDEX IF NOT EXISTS idx_distillation_used ON distillation_pairs(used_in_training)");
+            q.exec("CREATE INDEX IF NOT EXISTS idx_distillation_source ON distillation_pairs(source_episode_id)");
+
+            ok = q.exec(
+                "CREATE TABLE IF NOT EXISTS distillation_evals ("
+                "  id              INTEGER PRIMARY KEY AUTOINCREMENT,"
+                "  test_prompt     TEXT NOT NULL,"
+                "  teacher_response TEXT NOT NULL,"
+                "  student_response TEXT NOT NULL,"
+                "  similarity_score REAL DEFAULT 0.0,"
+                "  evaluated_ts    TEXT NOT NULL DEFAULT (datetime('now'))"
+                ")");
+            return ok;
+        }
+    });
+
     return SchemaMigrator::migrateDatabase(m_episodicDb, migrations,
                                             SchemaMigrator::EPISODIC_DB_VERSION);
 }
@@ -1301,6 +1356,20 @@ bool MemoryStore::migrateTraitsSchema()
                     return false;
             }
             return true;
+        }
+    });
+
+    migrations.append({1, 2, "Add political lean analysis log",
+        [](QSqlDatabase &db) -> bool {
+            QSqlQuery q(db);
+            return q.exec(
+                "CREATE TABLE IF NOT EXISTS political_lean_log ("
+                "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
+                "  lean_score REAL DEFAULT 0.0,"
+                "  contributing_traits TEXT DEFAULT '[]',"
+                "  analyzed_ts TEXT NOT NULL DEFAULT (datetime('now'))"
+                ")"
+            );
         }
     });
 
@@ -1652,6 +1721,66 @@ QVariantList MemoryStore::getActivePlansForQml()
     return list;
 }
 
+// --- Political Lean CRUD ---
+
+qint64 MemoryStore::insertLeanAnalysis(double leanScore, const QStringList &contributingTraitIds)
+{
+    if (!m_initialized) return -1;
+    QSqlQuery q(m_traitsDb);
+    q.prepare("INSERT INTO political_lean_log (lean_score, contributing_traits) "
+              "VALUES (:score, :traits)");
+    q.bindValue(":score", qBound(-1.0, leanScore, 1.0));
+    QJsonArray arr;
+    for (const QString &id : contributingTraitIds)
+        arr.append(id);
+    q.bindValue(":traits", QString::fromUtf8(QJsonDocument(arr).toJson(QJsonDocument::Compact)));
+    if (q.exec())
+        return q.lastInsertId().toLongLong();
+    qWarning() << "MemoryStore: insertLeanAnalysis failed:" << q.lastError().text();
+    return -1;
+}
+
+QVariantMap MemoryStore::getLatestLeanForQml()
+{
+    QVariantMap result;
+    if (!m_initialized) return result;
+    QSqlQuery q(m_traitsDb);
+    if (q.exec("SELECT lean_score, contributing_traits, analyzed_ts "
+               "FROM political_lean_log ORDER BY analyzed_ts DESC LIMIT 1")) {
+        if (q.next()) {
+            result["leanScore"] = q.value("lean_score").toDouble();
+            result["contributingTraits"] = q.value("contributing_traits").toString();
+            result["analyzedTs"] = q.value("analyzed_ts").toString();
+        }
+    }
+    return result;
+}
+
+QVariantList MemoryStore::getValueAndPolicyTraitsForQml()
+{
+    QVariantList list;
+    if (!m_initialized) return list;
+    QSqlQuery q(m_traitsDb);
+    if (q.exec("SELECT * FROM traits WHERE (type='value' OR type='policy') "
+               "AND archived=0 ORDER BY confidence DESC")) {
+        while (q.next()) {
+            TraitRecord r;
+            r.traitId = q.value("trait_id").toString();
+            r.type = q.value("type").toString();
+            r.statement = q.value("statement").toString();
+            r.confidence = q.value("confidence").toDouble();
+            QString evidence = q.value("evidence_episode_ids").toString();
+            QJsonDocument doc = QJsonDocument::fromJson(evidence.toUtf8());
+            for (const QJsonValue &v : doc.array())
+                r.evidenceEpisodeIds.append(QString::number(v.toInteger()));
+            r.lastConfirmedTs = QDateTime::fromString(q.value("last_confirmed_ts").toString(), Qt::ISODate);
+            r.createdTs = QDateTime::fromString(q.value("created_ts").toString(), Qt::ISODate);
+            list.append(traitToVariantMap(r));
+        }
+    }
+    return list;
+}
+
 // --- Phase 4: Lifecycle Query Methods ---
 
 QList<EpisodicRecord> MemoryStore::getEpisodesOlderThan(int ageDays,
@@ -1793,4 +1922,158 @@ int MemoryStore::archivedTraitCount() const
         return query.value(0).toInt();
     }
     return 0;
+}
+
+// --- Distillation CRUD ---
+
+qint64 MemoryStore::insertDistillationPair(const QString &userPrompt, const QString &teacherResponse,
+                                             const QString &systemContext, qint64 sourceEpisodeId,
+                                             const QString &sourceType, double qualityScore)
+{
+    if (!m_initialized) return -1;
+    QSqlQuery q(m_episodicDb);
+    q.prepare("INSERT INTO distillation_pairs (user_prompt, teacher_response, system_context, "
+              "source_episode_id, source_type, quality_score) VALUES (?, ?, ?, ?, ?, ?)");
+    q.addBindValue(userPrompt);
+    q.addBindValue(teacherResponse);
+    q.addBindValue(systemContext);
+    q.addBindValue(sourceEpisodeId);
+    q.addBindValue(sourceType);
+    q.addBindValue(qualityScore);
+    if (q.exec()) {
+        qint64 id = q.lastInsertId().toLongLong();
+        qDebug() << "Distillation pair inserted:" << id << "source:" << sourceType;
+        return id;
+    }
+    qWarning() << "Failed to insert distillation pair:" << q.lastError().text();
+    return -1;
+}
+
+QList<DistillationRecord> MemoryStore::getUnusedDistillationPairs(int limit) const
+{
+    QList<DistillationRecord> results;
+    if (!m_initialized) return results;
+    QSqlQuery q(m_episodicDb);
+    q.prepare("SELECT id, user_prompt, teacher_response, system_context, source_episode_id, "
+              "source_type, quality_score, used_in_training, created_ts "
+              "FROM distillation_pairs WHERE used_in_training = 0 "
+              "ORDER BY quality_score DESC LIMIT ?");
+    q.addBindValue(limit);
+    if (q.exec()) {
+        while (q.next()) {
+            DistillationRecord r;
+            r.id = q.value(0).toLongLong();
+            r.userPrompt = q.value(1).toString();
+            r.teacherResponse = q.value(2).toString();
+            r.systemContext = q.value(3).toString();
+            r.sourceEpisodeId = q.value(4).toLongLong();
+            r.sourceType = q.value(5).toString();
+            r.qualityScore = q.value(6).toDouble();
+            r.usedInTraining = q.value(7).toBool();
+            r.createdTs = QDateTime::fromString(q.value(8).toString(), Qt::ISODate);
+            results.append(r);
+        }
+    }
+    return results;
+}
+
+bool MemoryStore::markDistillationPairUsed(qint64 id)
+{
+    if (!m_initialized) return false;
+    QSqlQuery q(m_episodicDb);
+    q.prepare("UPDATE distillation_pairs SET used_in_training = 1 WHERE id = ?");
+    q.addBindValue(id);
+    return q.exec();
+}
+
+int MemoryStore::distillationPairCount() const
+{
+    if (!m_initialized) return 0;
+    QSqlQuery q(m_episodicDb);
+    if (q.exec("SELECT COUNT(*) FROM distillation_pairs") && q.next())
+        return q.value(0).toInt();
+    return 0;
+}
+
+int MemoryStore::usedDistillationPairCount() const
+{
+    if (!m_initialized) return 0;
+    QSqlQuery q(m_episodicDb);
+    if (q.exec("SELECT COUNT(*) FROM distillation_pairs WHERE used_in_training = 1") && q.next())
+        return q.value(0).toInt();
+    return 0;
+}
+
+QList<qint64> MemoryStore::getDistillationSourceEpisodeIds() const
+{
+    QList<qint64> ids;
+    if (!m_initialized) return ids;
+    QSqlQuery q(m_episodicDb);
+    if (q.exec("SELECT DISTINCT source_episode_id FROM distillation_pairs WHERE source_episode_id >= 0")) {
+        while (q.next())
+            ids.append(q.value(0).toLongLong());
+    }
+    return ids;
+}
+
+qint64 MemoryStore::insertDistillationEval(const QString &testPrompt, const QString &teacherResp,
+                                             const QString &studentResp, double similarityScore)
+{
+    if (!m_initialized) return -1;
+    QSqlQuery q(m_episodicDb);
+    q.prepare("INSERT INTO distillation_evals (test_prompt, teacher_response, student_response, "
+              "similarity_score) VALUES (?, ?, ?, ?)");
+    q.addBindValue(testPrompt);
+    q.addBindValue(teacherResp);
+    q.addBindValue(studentResp);
+    q.addBindValue(similarityScore);
+    if (q.exec()) {
+        qint64 id = q.lastInsertId().toLongLong();
+        qDebug() << "Distillation eval inserted:" << id << "similarity:" << similarityScore;
+        return id;
+    }
+    qWarning() << "Failed to insert distillation eval:" << q.lastError().text();
+    return -1;
+}
+
+double MemoryStore::getAverageDistillationScore(int recentCount) const
+{
+    if (!m_initialized) return 0.0;
+    QSqlQuery q(m_episodicDb);
+    q.prepare("SELECT AVG(similarity_score) FROM ("
+              "  SELECT similarity_score FROM distillation_evals "
+              "  ORDER BY evaluated_ts DESC LIMIT ?"
+              ")");
+    q.addBindValue(recentCount);
+    if (q.exec() && q.next())
+        return q.value(0).toDouble();
+    return 0.0;
+}
+
+QVariantList MemoryStore::getDistillationStatsForQml()
+{
+    QVariantList list;
+    if (!m_initialized) return list;
+
+    QVariantMap stats;
+    stats["totalPairs"] = distillationPairCount();
+    stats["usedPairs"] = usedDistillationPairCount();
+    stats["avgScore"] = getAverageDistillationScore(20);
+
+    // Recent eval scores for trend
+    QSqlQuery q(m_episodicDb);
+    if (q.exec("SELECT similarity_score, evaluated_ts FROM distillation_evals "
+               "ORDER BY evaluated_ts DESC LIMIT 10")) {
+        QVariantList evals;
+        while (q.next()) {
+            QVariantMap eval;
+            eval["score"] = q.value(0).toDouble();
+            eval["ts"] = q.value(1).toString();
+            evals.append(eval);
+        }
+        stats["recentEvals"] = evals;
+    }
+
+    list.append(stats);
+    return list;
 }

@@ -13,6 +13,7 @@
 #include <memory>
 
 #include <onnxruntime_training_cxx_api.h>
+#include "threadsafeprogress.h"
 
 struct TrainingExample;
 
@@ -62,10 +63,10 @@ public:
     // Property getters
     bool isInitialized() const { return m_initialized; }
     bool isTraining() const { return m_isTraining.loadRelaxed(); }
-    float currentLoss() const { return m_currentLoss; }
-    int currentStep() const { return m_currentStep; }
-    int totalSteps() const { return m_totalSteps; }
-    QString trainingStatus() const { return m_trainingStatus; }
+    float currentLoss() const { return m_progress.currentLoss(); }
+    int currentStep() const { return m_progress.currentStep(); }
+    int totalSteps() const { return m_progress.totalSteps(); }
+    QString trainingStatus() const { return m_progress.status(); }
 
 signals:
     void isInitializedChanged();
@@ -109,13 +110,10 @@ private:
     // Thread safety
     QAtomicInt m_pauseRequested{0};
     QAtomicInt m_isTraining{0};
+    ThreadSafeProgress m_progress;
 
     // State
     bool m_initialized = false;
-    float m_currentLoss = 0.0f;
-    int m_currentStep = 0;
-    int m_totalSteps = 0;
-    QString m_trainingStatus = "Not initialized";
     QString m_exportedModelPath;
     TrainingConfig m_activeConfig;
 };
