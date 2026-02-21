@@ -124,7 +124,10 @@ void ResearchEngine::startCycle()
 {
     resetDailyCounterIfNeeded();
 
-    if (!canStartCycle()) return;
+    if (!canStartCycle()) {
+        emit cycleFinished();
+        return;
+    }
 
     qDebug() << "ResearchEngine: starting research cycle";
     m_isResearching = true;

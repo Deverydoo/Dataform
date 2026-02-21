@@ -7,6 +7,10 @@ IdleJobCoordinator::IdleJobCoordinator(QObject *parent)
     m_scheduleTimer = new QTimer(this);
     m_scheduleTimer->setSingleShot(true);
     connect(m_scheduleTimer, &QTimer::timeout, this, &IdleJobCoordinator::scheduleNextEngine);
+
+    m_watchdogTimer = new QTimer(this);
+    m_watchdogTimer->setSingleShot(true);
+    connect(m_watchdogTimer, &QTimer::timeout, this, &IdleJobCoordinator::onEngineTimeout);
 }
 
 IdleJobCoordinator::~IdleJobCoordinator()
@@ -58,6 +62,7 @@ void IdleJobCoordinator::onIdleWindowClosed()
 {
     m_idleWindowOpen = false;
     m_scheduleTimer->stop();
+    m_watchdogTimer->stop();
     qDebug() << "IdleJobCoordinator: idle window closed";
 
     if (!m_activeEngineName.isEmpty()) {
@@ -73,6 +78,7 @@ void IdleJobCoordinator::onEngineCycleFinished(const QString &name)
         return;
     }
 
+    m_watchdogTimer->stop();
     qDebug() << "IdleJobCoordinator: engine" << name << "cycle finished";
     m_activeEngineName.clear();
     emit activeEngineChanged();
@@ -103,6 +109,22 @@ void IdleJobCoordinator::onForegroundIdle()
     }
 }
 
+void IdleJobCoordinator::onEngineTimeout()
+{
+    if (m_activeEngineName.isEmpty()) return;
+
+    qWarning() << "IdleJobCoordinator: WATCHDOG — engine" << m_activeEngineName
+               << "did not emit cycleFinished within" << ENGINE_TIMEOUT_MS / 1000
+               << "seconds, force-resetting";
+
+    m_activeEngineName.clear();
+    emit activeEngineChanged();
+
+    if (m_idleWindowOpen && !m_foregroundBusy) {
+        m_scheduleTimer->start(INTER_ENGINE_DELAY_MS);
+    }
+}
+
 void IdleJobCoordinator::scheduleNextEngine()
 {
     if (!m_idleWindowOpen || m_foregroundBusy) return;
@@ -122,6 +144,7 @@ void IdleJobCoordinator::scheduleNextEngine()
             emit pendingEngineCountChanged();
             qDebug() << "IdleJobCoordinator: activating engine" << entry.name
                      << "(priority:" << entry.priority << ")";
+            m_watchdogTimer->start(ENGINE_TIMEOUT_MS);
             entry.start();
             return;
         }

@@ -374,11 +374,14 @@ void LLMProviderManager::sendConversation(const QString &systemPrompt,
         }
         jsonBody["messages"] = formattedFull;
         jsonBody["stream"] = false;
-        // Let Ollama use its own num_predict default (driven by the user's
-        // Ollama configuration / num_ctx). We do NOT override num_predict here
-        // — hardcoding it starved thinking models that burn tokens on reasoning.
         QJsonObject options;
         options["repeat_penalty"] = 1.15;
+        // Background requests produce short JSON — cap output tokens to prevent
+        // the model from generating endlessly (esp. with large context windows).
+        // Foreground chat uses Ollama's own default (driven by user config).
+        if (!requestTag.isEmpty()) {
+            options["num_predict"] = 2048;
+        }
         jsonBody["options"] = options;
 
     } else if (m_currentProvider == "OpenAI") {

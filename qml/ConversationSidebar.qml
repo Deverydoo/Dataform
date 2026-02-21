@@ -704,6 +704,14 @@ Rectangle {
         // pendingCountChanged triggers re-evaluation
     }
 
+    // Refresh relative timestamps every 60 seconds
+    Timer {
+        interval: 60000
+        running: !collapsed
+        repeat: true
+        onTriggered: refreshConversations()
+    }
+
     Component.onCompleted: {
         refreshConversations()
     }

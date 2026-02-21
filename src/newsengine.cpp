@@ -97,7 +97,10 @@ void NewsEngine::startCycle()
 {
     resetDailyCounterIfNeeded();
 
-    if (!canStartCycle()) return;
+    if (!canStartCycle()) {
+        emit cycleFinished();
+        return;
+    }
 
     qDebug() << "NewsEngine: starting news cycle";
     m_isFetchingNews = true;

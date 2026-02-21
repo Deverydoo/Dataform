@@ -158,6 +158,7 @@ void DistillationManager::startCycle()
 
     if (!canStartCycle()) {
         setStatus("Daily limit reached or conditions not met");
+        emit cycleFinished();
         return;
     }
 
@@ -212,6 +213,7 @@ void DistillationManager::phaseSelectSource()
         setStatus("No suitable source material found");
         m_isDistilling = false;
         emit isDistillingChanged();
+        emit cycleFinished();
         return;
     }
 
@@ -389,6 +391,7 @@ void DistillationManager::phaseGenerateTeacher(const QString &systemPrompt,
         setStatus("No LLM provider available");
         m_isDistilling = false;
         emit isDistillingChanged();
+        emit cycleFinished();
         return;
     }
 
@@ -425,6 +428,7 @@ void DistillationManager::onTeacherError(const QString &owner, const QString &er
         setStatus("Too many errors — pausing distillation");
         m_isDistilling = false;
         emit isDistillingChanged();
+        emit cycleFinished();
         return;
     }
 
@@ -435,6 +439,7 @@ void DistillationManager::onTeacherError(const QString &owner, const QString &er
     } else {
         m_isDistilling = false;
         emit isDistillingChanged();
+        emit cycleFinished();
     }
 }
 

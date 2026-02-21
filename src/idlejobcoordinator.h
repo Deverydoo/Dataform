@@ -44,6 +44,7 @@ signals:
 
 private:
     void scheduleNextEngine();
+    void onEngineTimeout();
 
     QList<EngineEntry> m_engines;       // priority-sorted
     QString m_activeEngineName;
@@ -51,9 +52,11 @@ private:
     bool m_foregroundBusy = false;
     int m_currentIndex = 0;             // round-robin position
     QTimer *m_scheduleTimer = nullptr;
+    QTimer *m_watchdogTimer = nullptr;
 
     static constexpr int INTER_ENGINE_DELAY_MS = 2000;
     static constexpr int FULL_ROUND_DELAY_MS = 30000;
+    static constexpr int ENGINE_TIMEOUT_MS = 120000;  // 2 min safety net
 };
 
 #endif // IDLEJOBCOORDINATOR_H

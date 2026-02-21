@@ -394,6 +394,7 @@ void EmbeddingManager::startBatchEmbedding()
     if (m_batchQueue.isEmpty()) {
         m_status = "All records embedded";
         emit statusChanged();
+        emit cycleFinished();
         return;
     }
 
