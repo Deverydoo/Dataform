@@ -172,6 +172,7 @@ void ReflectionEngine::runPhase1_SelectEpisodes()
 
     if (!m_dataGenerator) {
         emit reflectionError("TrainingDataGenerator not available");
+        setPhase("idle");
         m_isReflecting = false;
         emit isReflectingChanged();
         return;
@@ -182,6 +183,7 @@ void ReflectionEngine::runPhase1_SelectEpisodes()
     if (episodeIds.size() < MIN_HIGH_SIGNAL) {
         setReflectionStatus(QString("Not enough high-signal episodes (%1 found, need %2)")
             .arg(episodeIds.size()).arg(MIN_HIGH_SIGNAL));
+        setPhase("idle");
         m_isReflecting = false;
         emit isReflectingChanged();
         return;
@@ -202,6 +204,7 @@ void ReflectionEngine::runPhase2_GenerateTrainingData()
     int count = m_dataGenerator->exampleCount();
     if (count < 4) {  // Less than one batch
         setReflectionStatus("Insufficient training examples generated");
+        setPhase("idle");
         m_isReflecting = false;
         emit isReflectingChanged();
         return;
@@ -218,6 +221,7 @@ void ReflectionEngine::runPhase3_TrainAdapter()
 
     if (!m_trainingManager || !m_profileManager) {
         emit reflectionError("Training manager or profile manager not available");
+        setPhase("idle");
         m_isReflecting = false;
         emit isReflectingChanged();
         return;
@@ -237,6 +241,7 @@ void ReflectionEngine::runPhase3_TrainAdapter()
         if (!m_trainingManager->initialize(config)) {
             setReflectionStatus("Failed to initialize ORT Training - check artifacts");
             emit reflectionError("ORT Training initialization failed");
+            setPhase("idle");
             m_isReflecting = false;
             emit isReflectingChanged();
             return;
@@ -278,6 +283,7 @@ void ReflectionEngine::onTrainingPaused(int stepsCompleted)
     setReflectionStatus(QString("Training paused at step %1 - will resume next idle window")
         .arg(stepsCompleted));
 
+    setPhase("idle");
     m_isReflecting = false;
     emit isReflectingChanged();
 }
@@ -288,6 +294,7 @@ void ReflectionEngine::onTrainingError(const QString &error)
     setReflectionStatus("Training error: " + error);
     emit reflectionError(error);
 
+    setPhase("idle");
     m_isReflecting = false;
     emit isReflectingChanged();
 }
@@ -299,6 +306,7 @@ void ReflectionEngine::runPhase4_EvaluateCandidate()
 
     if (!m_trainingManager || !m_adapterManager || !m_evalSuite || !m_profileManager) {
         emit reflectionError("Missing dependencies for evaluation");
+        setPhase("idle");
         m_isReflecting = false;
         emit isReflectingChanged();
         return;

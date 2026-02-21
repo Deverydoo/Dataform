@@ -211,6 +211,7 @@ void DistillationManager::phaseSelectSource()
 
     if (userPrompt.isEmpty()) {
         setStatus("No suitable source material found");
+        setPhase(Idle);
         m_isDistilling = false;
         emit isDistillingChanged();
         emit cycleFinished();
@@ -426,6 +427,7 @@ void DistillationManager::onTeacherError(const QString &owner, const QString &er
 
     if (m_consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
         setStatus("Too many errors — pausing distillation");
+        setPhase(Idle);
         m_isDistilling = false;
         emit isDistillingChanged();
         emit cycleFinished();

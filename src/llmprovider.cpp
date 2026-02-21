@@ -326,6 +326,7 @@ void LLMProviderManager::sendConversation(const QString &systemPrompt,
             emit backgroundErrorOccurred(requestTag, "No model selected");
             processNextBackgroundRequest();
         } else {
+            m_foregroundActive = false;
             emit errorOccurred("No model selected. Please select a model from the Settings panel.");
         }
         return;
