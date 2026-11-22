@@ -15,12 +15,9 @@ networkinformation/, platforms/, qml/, sqldrivers/, styles/ and tls/.
 Copyright (C) The Qt Company Ltd. and other contributors.
 https://www.qt.io/
 
-Most of Qt is used under the GNU Lesser General Public License version 3
-(licenses/LGPL-3.0-only.txt; it builds on licenses/GPL-3.0-only.txt).
-
-Qt Charts (Qt6Charts.dll, Qt6ChartsQml.dll and qml/QtCharts/) is offered by
-The Qt Company only under the GNU General Public License version 3 or a
-commercial Qt license. It is not available under the LGPL.
+Qt is used under the GNU Lesser General Public License version 3
+(licenses/LGPL-3.0-only.txt; it builds on licenses/GPL-3.0-only.txt). Only
+Qt modules that are available under the LGPL are included.
 
 The Qt libraries are unmodified builds from the official Qt 6.10.1 MSVC 2022
 x64 binaries. Their source code is available from

@@ -49,6 +49,24 @@ Remove-Item (Join-Path $stage "icuuc.dll") -Force -ErrorAction SilentlyContinue
 Get-ChildItem (Join-Path $stage "sqldrivers") -Filter *.dll |
     Where-Object { $_.Name -ne "qsqlite.dll" } | Remove-Item -Force
 
+# windeployqt also drops in Qt6Quick3DUtils.dll, which nothing here loads, and
+# empty folders for QML modules that are not deployed. Qt Quick 3D is GPL-only.
+Remove-Item (Join-Path $stage "Qt6Quick3DUtils.dll") -Force -ErrorAction SilentlyContinue
+Get-ChildItem $stage -Directory -Recurse | Sort-Object { $_.FullName.Length } -Descending |
+    Where-Object { -not (Get-ChildItem $_.FullName -Force) } | Remove-Item -Force
+
+# The package is distributed under DATAFORM's own license, so it must not carry
+# any Qt module that The Qt Company offers only under the GPL or commercially.
+$gplOnly = 'Qt6(Charts|DataVisualization|Graphs|Quick3D|VirtualKeyboard|NetworkAuth|QuickTimeline|Lottie|Coap|Mqtt|Opcua|HttpServer|SpatialAudio|ShaderTools|StateMachine|Protobuf|Grpc|LocationQuick|Location)'
+$gplQml = '^(QtCharts|QtDataVisualization|QtGraphs|QtQuick3D|QtVirtualKeyboard|QtNetworkAuth)$|QtQuick[\\/](Timeline|VirtualKeyboard)'
+$bad = @(Get-ChildItem $stage -Recurse -File | Where-Object { $_.Name -match $gplOnly })
+$bad += @(Get-ChildItem (Join-Path $stage "qml") -Recurse -Directory |
+    Where-Object { $_.FullName.Substring((Join-Path $stage "qml").Length + 1) -match $gplQml })
+if ($bad.Count -gt 0) {
+    $bad | ForEach-Object { Write-Host "GPL-only Qt content: $($_.FullName)" }
+    throw "The package contains GPL-only Qt modules"
+}
+
 # The offscreen platform plugin lets the app start without a desktop session,
 # which is how the release is smoke-tested.
 Copy-Item (Join-Path $QtDir "plugins/platforms/qoffscreen.dll") (Join-Path $stage "platforms")
