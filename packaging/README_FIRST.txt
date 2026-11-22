@@ -1,5 +1,5 @@
 DATAFORM @VERSION@ for Windows (64-bit)
-=================================
+===================================
 
 DATAFORM is a desktop AI companion that keeps an encrypted memory of your
 conversations on your own PC and learns your preferences over time.
