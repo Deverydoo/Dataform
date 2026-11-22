@@ -1,0 +1,131 @@
+# Builds DATAFORM on every push and pull request to main, on a runner with no GPU.
+#
+# Two configurations:
+#   lean      - the app's own code only: training, llama.cpp and voice off.
+#   training  - adds the ONNX Runtime training tier and embedded llama.cpp on
+#               the CPU, so their code is compiled too.
+#
+# The ONNX Runtime the release ships is built from source with training APIs
+# and is not in git. For CI the stock 1.30.0 runtime from NuGet stands in: the
+# vendored 1.30 headers compile against it and the training API is only looked
+# up at run time, so it links. Voice needs Muninn, which is not public, so it
+# is not built here.
+#
+# Each configuration finishes with a smoke test: windeployqt, then the app is
+# started offscreen for 15 seconds (tools/smoke_test.ps1).
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  QT_VERSION: "6.10.1"
+  ORT_VERSION: "1.30.0"
+
+jobs:
+  build:
+    name: Build (${{ matrix.name }})
+    runs-on: windows-latest
+    timeout-minutes: 90
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: lean
+            submodules: false
+            ort: false
+            cmake_flags: >-
+              -DDATAFORM_ENABLE_TRAINING=OFF
+              -DDATAFORM_ENABLE_LLAMACPP=OFF
+              -DDATAFORM_ENABLE_VOICE=OFF
+          - name: training
+            submodules: true
+            ort: true
+            cmake_flags: >-
+              -DDATAFORM_ENABLE_TRAINING=ON
+              -DDATAFORM_ENABLE_LLAMACPP=ON
+              -DDATAFORM_ENABLE_CUDA=OFF
+              -DDATAFORM_ENABLE_VOICE=OFF
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: ${{ matrix.submodules }}
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: ${{ env.QT_VERSION }}
+          host: windows
+          target: desktop
+          arch: win64_msvc2022_64
+          modules: qtcharts
+          cache: true
+
+      - name: Restore ONNX Runtime package
+        if: matrix.ort
+        id: ort-cache
+        uses: actions/cache@v6
+        with:
+          path: ${{ runner.temp }}/ort
+          key: ort-nuget-${{ env.ORT_VERSION }}
+
+      - name: Download ONNX Runtime package
+        if: matrix.ort && steps.ort-cache.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          $dir = Join-Path $env:RUNNER_TEMP "ort"
+          New-Item -ItemType Directory -Force $dir | Out-Null
+          $pkg = Join-Path $env:RUNNER_TEMP "ort.nupkg"
+          $url = "https://api.nuget.org/v3-flatcontainer/microsoft.ml.onnxruntime/$env:ORT_VERSION/microsoft.ml.onnxruntime.$env:ORT_VERSION.nupkg"
+          Invoke-WebRequest $url -OutFile $pkg
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $zip = [IO.Compression.ZipFile]::OpenRead($pkg)
+          foreach ($e in $zip.Entries | Where-Object { $_.FullName -like "runtimes/win-x64/native/*" }) {
+            [IO.Compression.ZipFileExtensions]::ExtractToFile($e, (Join-Path $dir $e.Name), $true)
+          }
+          $zip.Dispose()
+          Get-ChildItem $dir
+
+      - name: Put ONNX Runtime where the build looks for it
+        if: matrix.ort
+        shell: pwsh
+        run: |
+          $src = Join-Path $env:RUNNER_TEMP "ort"
+          $root = "third_party/onnxruntime-training"
+          New-Item -ItemType Directory -Force "$root/lib", "$root/bin" | Out-Null
+          Copy-Item "$src/*.lib" "$root/lib"
+          Copy-Item "$src/*.dll" "$root/bin"
+
+      - name: Configure
+        shell: pwsh
+        run: >
+          cmake -B build -A x64
+          "-DCMAKE_PREFIX_PATH=$env:QT_ROOT_DIR"
+          ${{ matrix.cmake_flags }}
+
+      - name: Build
+        run: cmake --build build --config Release --parallel
+
+      - name: Smoke test
+        shell: pwsh
+        run: |
+          $exe = "build/Release/Dataform.exe"
+          & "$env:QT_ROOT_DIR/bin/windeployqt.exe" --release --qmldir qml --no-translations `
+              --no-system-d3d-compiler --no-opengl-sw --no-compiler-runtime $exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Copy-Item "$env:QT_ROOT_DIR/plugins/platforms/qoffscreen.dll" build/Release/platforms
+          ./tools/smoke_test.ps1 -Exe $exe -Seconds 15

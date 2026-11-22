@@ -9,6 +9,10 @@
   A local-first AI companion that learns its user over decades through evolutionary personality adaptation.
 </p>
 
+<p align="center">
+  <a href="https://github.com/Deverydoo/Dataform/actions/workflows/ci.yml"><img src="https://github.com/Deverydoo/Dataform/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI" /></a>
+</p>
+
 ---
 
 ## What is DATAFORM?
@@ -128,35 +132,44 @@ Qt6/QML Desktop App (C++17)
     └── WebSearchEngine           — DuckDuckGo search + page fetch
 ```
 
+## Download
+
+Windows builds are on the [Releases](https://github.com/Deverydoo/Dataform/releases) page as a portable zip. Unzip it somewhere writable and read `README_FIRST.txt`: DATAFORM needs a language model to talk through (Ollama by default, or LM Studio, OpenAI or Anthropic) and the Microsoft Visual C++ 2015-2022 runtime. The release build leaves out the voice loop and the embedded llama.cpp model.
+
 ## Building
 
 ### Prerequisites
 
-- **Qt 6.10+** with Quick, Qml, Network, Sql, Charts, Widgets modules
+- **Qt 6.10+** with Quick, Qml, Network, Sql, Charts, Widgets modules (and Multimedia for voice)
 - **CMake 3.16+**
 - **MSVC 2022** (Windows)
 - **Ollama** running locally (recommended default provider)
 
 ### Build Options
 
+| Option | Default | What it does |
+|--------|---------|--------------|
+| `DATAFORM_ENABLE_TRAINING` | ON | LoRA training tier. Needs ONNX Runtime with training APIs in `third_party/onnxruntime-training` (`include/`, `lib/`, `bin/`). No current package ships them; build ONNX Runtime 1.30 from source as described in `Docs/decisions/0002-onnxruntime-unification.md`. |
+| `DATAFORM_ENABLE_LLAMACPP` | ON | Embedded llama.cpp for background tasks (`git submodule update --init`). |
+| `DATAFORM_ENABLE_CUDA` | ON | Builds llama.cpp's CUDA backend when the CUDA Toolkit is found, CPU otherwise. |
+| `DATAFORM_ENABLE_VOICE` | ON | Voice loop. Needs a built Muninn checkout (`-DMUNINN_ROOT=...`); without one the build carries on text-only. |
+
 ```bash
-# Standard build (no training, no llama.cpp)
+# Everything that is available on this machine
 cmake -B build -DCMAKE_PREFIX_PATH="C:/Qt/6.10.1/msvc2022_64"
 cmake --build build --config Release
 
-# With LoRA training support (requires ONNX Runtime Training v1.19.2)
-cmake -B build -DCMAKE_PREFIX_PATH="C:/Qt/6.10.1/msvc2022_64" -DDATAFORM_ENABLE_TRAINING=ON
+# The lean build CI uses: no training, no llama.cpp, no voice
+cmake -B build -DCMAKE_PREFIX_PATH="C:/Qt/6.10.1/msvc2022_64"   -DDATAFORM_ENABLE_TRAINING=OFF -DDATAFORM_ENABLE_LLAMACPP=OFF -DDATAFORM_ENABLE_VOICE=OFF
 cmake --build build --config Release
 
-# With embedded llama.cpp for background tasks
-cmake -B build -DCMAKE_PREFIX_PATH="C:/Qt/6.10.1/msvc2022_64" -DDATAFORM_ENABLE_LLAMACPP=ON
-cmake --build build --config Release
-
-# Full build (training + llama.cpp)
-cmake -B build -DCMAKE_PREFIX_PATH="C:/Qt/6.10.1/msvc2022_64" \
-  -DDATAFORM_ENABLE_TRAINING=ON -DDATAFORM_ENABLE_LLAMACPP=ON
-cmake --build build --config Release
+# The release configuration
+cmake -B build_release -DCMAKE_PREFIX_PATH="C:/Qt/6.10.1/msvc2022_64"   -DDATAFORM_ENABLE_TRAINING=ON -DDATAFORM_ENABLE_LLAMACPP=OFF -DDATAFORM_ENABLE_VOICE=OFF
+cmake --build build_release --config Release
+pwsh tools/package_release.ps1 -BuildDir build_release -QtDir C:/Qt/6.10.1/msvc2022_64 -OrtSourceDir <ONNX Runtime source>
 ```
+
+`tools/smoke_test.ps1` starts a built exe offscreen for a few seconds and checks that it loads; CI runs it after every build.
 
 ### Run
 
@@ -166,7 +179,7 @@ build/Release/Dataform.exe
 
 Ensure Ollama is running with a model pulled (e.g., `ollama pull qwen3:8b`).
 
-For llama.cpp background inference, place a `.gguf` model file in `models/background_llm/`.
+For llama.cpp background inference, place a `.gguf` model file in `models/background_llm/`, or download one from Settings > Models > Catalog.
 
 ## Project Status
 
@@ -187,6 +200,9 @@ DATAFORM is in active development. Completed phases:
 | + | llama.cpp embedded inference for background tasks | Done |
 | + | Agentic tool system (5 built-in tools, ReAct loop) | Done |
 | + | Idle job coordinator (serialized engine scheduling) | Done |
+| + | Background tier: light engines run while the window is unfocused | Done |
+| + | Curated model catalog with in-app downloads | Done |
+| + | Optional voice loop (Muninn speech recognition, Piper or SAPI speech) | Done |
 
 ## License
 
