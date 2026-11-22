@@ -1,7 +1,6 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
-import QtCharts
 
 Rectangle {
     id: memoryRoot
@@ -923,52 +922,17 @@ Rectangle {
                         color: "#dcdcaa"
                     }
 
-                    ChartView {
+                    // Sentiment (solid) and energy (dashed), one point per day, on -1..1.
+                    SimpleChart {
                         id: moodChart
                         Layout.fillWidth: true
                         Layout.preferredHeight: 200
-                        antialiasing: true
-                        legend.visible: false
-                        backgroundColor: "#1e1e1e"
-                        plotAreaColor: "#252526"
-
-                        ValuesAxis {
-                            id: moodYAxis
-                            min: -1
-                            max: 1
-                            tickCount: 5
-                            labelsColor: "#888888"
-                            gridLineColor: "#3e3e42"
-                            lineVisible: false
-                        }
-
-                        ValuesAxis {
-                            id: moodXAxis
-                            min: 0
-                            max: 30
-                            tickCount: 6
-                            labelsColor: "#888888"
-                            gridLineColor: "#3e3e42"
-                            lineVisible: false
-                            labelFormat: "%d"
-                        }
-
-                        LineSeries {
-                            id: moodSeries
-                            axisX: moodXAxis
-                            axisY: moodYAxis
-                            color: "#4ec9b0"
-                            width: 2
-                        }
-
-                        LineSeries {
-                            id: energySeries
-                            axisX: moodXAxis
-                            axisY: moodYAxis
-                            color: "#569cd6"
-                            width: 1
-                            style: Qt.DashLine
-                        }
+                        kind: "line"
+                        yMin: -1
+                        yMax: 1
+                        yTicks: 5
+                        xMax: 30
+                        xTicks: 6
                     }
 
                     RowLayout {
@@ -985,46 +949,18 @@ Rectangle {
                         color: "#dcdcaa"
                     }
 
-                    ChartView {
+                    // Traits known per day, filled to the axis.
+                    SimpleChart {
                         id: traitChart
                         Layout.fillWidth: true
                         Layout.preferredHeight: 180
-                        antialiasing: true
-                        legend.visible: false
-                        backgroundColor: "#1e1e1e"
-                        plotAreaColor: "#252526"
-
-                        ValuesAxis {
-                            id: traitYAxis
-                            min: 0
-                            max: 10
-                            labelsColor: "#888888"
-                            gridLineColor: "#3e3e42"
-                            lineVisible: false
-                        }
-
-                        ValuesAxis {
-                            id: traitXAxis
-                            min: 0
-                            max: 90
-                            tickCount: 4
-                            labelsColor: "#888888"
-                            gridLineColor: "#3e3e42"
-                            lineVisible: false
-                            labelFormat: "%d"
-                        }
-
-                        AreaSeries {
-                            axisX: traitXAxis
-                            axisY: traitYAxis
-                            color: "#2d5a2d"
-                            borderColor: "#4ec9b0"
-                            borderWidth: 2
-
-                            upperSeries: LineSeries {
-                                id: traitLineSeries
-                            }
-                        }
+                        kind: "area"
+                        fillColor: "#2d5a2d"
+                        integerSteps: true
+                        yMin: 0
+                        yMax: 10
+                        xMax: 90
+                        xTicks: 4
                     }
 
                     // Episode Activity
@@ -1035,43 +971,15 @@ Rectangle {
                         color: "#dcdcaa"
                     }
 
-                    ChartView {
+                    // Episodes per day as bars, labelled MM-DD.
+                    SimpleChart {
                         id: activityChart
                         Layout.fillWidth: true
                         Layout.preferredHeight: 180
-                        antialiasing: true
-                        legend.visible: false
-                        backgroundColor: "#1e1e1e"
-                        plotAreaColor: "#252526"
-
-                        ValuesAxis {
-                            id: actYAxis
-                            min: 0
-                            max: 10
-                            labelsColor: "#888888"
-                            gridLineColor: "#3e3e42"
-                            lineVisible: false
-                        }
-
-                        BarCategoryAxis {
-                            id: actXAxis
-                            labelsColor: "#888888"
-                            gridLineColor: "#3e3e42"
-                            lineVisible: false
-                        }
-
-                        BarSeries {
-                            id: activityBarSeries
-                            axisX: actXAxis
-                            axisY: actYAxis
-
-                            BarSet {
-                                id: activityBarSet
-                                label: "Episodes"
-                                color: "#569cd6"
-                                borderColor: "#3e3e42"
-                            }
-                        }
+                        kind: "bar"
+                        integerSteps: true
+                        yMin: 0
+                        yMax: 10
                     }
 
                     // Summary stats
@@ -1458,46 +1366,49 @@ Rectangle {
 
     function refreshAnalytics() {
         // Mood chart
-        moodSeries.clear()
-        energySeries.clear()
-        var sentimentData = sentimentTracker.getSentimentHistoryForQml(30)
+        var sentimentData = sentimentTracker.getSentimentHistoryForQml(30) || []
+        var mood = [], energy = []
         for (var i = 0; i < sentimentData.length; i++) {
-            moodSeries.append(i, sentimentData[i].avgScore)
-            energySeries.append(i, sentimentData[i].avgEnergy)
+            mood.push(sentimentData[i].avgScore)
+            energy.push(sentimentData[i].avgEnergy)
         }
         if (sentimentData.length > 0) {
-            moodXAxis.max = Math.max(sentimentData.length - 1, 1)
+            moodChart.xMax = Math.max(sentimentData.length - 1, 1)
         }
+        moodChart.series = [
+            { values: mood, color: "#4ec9b0", width: 2 },
+            { values: energy, color: "#569cd6", width: 1, dashed: true }
+        ]
 
         // Trait growth chart
-        traitLineSeries.clear()
-        var traitData = memoryStore.getTraitGrowthForQml(90)
+        var traitData = memoryStore.getTraitGrowthForQml(90) || []
         var maxTraits = 10
+        var traitCounts = []
         for (var j = 0; j < traitData.length; j++) {
-            traitLineSeries.append(j, traitData[j].count)
+            traitCounts.push(traitData[j].count)
             if (traitData[j].count > maxTraits) maxTraits = traitData[j].count
         }
-        traitYAxis.max = maxTraits + 2
+        traitChart.yMax = maxTraits + 2
         if (traitData.length > 0) {
-            traitXAxis.max = Math.max(traitData.length - 1, 1)
+            traitChart.xMax = Math.max(traitData.length - 1, 1)
         }
+        traitChart.series = [ { values: traitCounts, color: "#4ec9b0", width: 2 } ]
 
         // Activity bar chart
-        activityBarSet.values = []
         var categories = []
-        var actData = memoryStore.getEpisodeActivityForQml(30)
+        var actData = memoryStore.getEpisodeActivityForQml(30) || []
         var maxAct = 10
         var values = []
         for (var k = 0; k < actData.length; k++) {
             // Show abbreviated date
-            var d = actData[k].date
+            var d = String(actData[k].date)
             categories.push(d.substring(5)) // MM-DD
             values.push(actData[k].count)
             if (actData[k].count > maxAct) maxAct = actData[k].count
         }
-        actXAxis.categories = categories
-        activityBarSet.values = values
-        actYAxis.max = maxAct + 2
+        activityChart.yMax = maxAct + 2
+        activityChart.categories = categories
+        activityChart.series = [ { values: values, color: "#569cd6", borderColor: "#3e3e42" } ]
     }
 
     Connections {

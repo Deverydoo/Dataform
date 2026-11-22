@@ -140,7 +140,7 @@ Windows builds are on the [Releases](https://github.com/Deverydoo/Dataform/relea
 
 ### Prerequisites
 
-- **Qt 6.10+** with Quick, Qml, Network, Sql, Charts, Widgets modules (and Multimedia for voice)
+- **Qt 6.10+** with Quick, Qml, Network, Sql, Widgets modules (and Multimedia for voice)
 - **CMake 3.16+**
 - **MSVC 2022** (Windows)
 - **Ollama** running locally (recommended default provider)

@@ -6,7 +6,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 
-find_package(Qt6 REQUIRED COMPONENTS Core Quick Qml Network Sql QuickDialogs2 Widgets Charts)
+find_package(Qt6 REQUIRED COMPONENTS Core Quick Qml Network Sql QuickDialogs2 Widgets)
 
 qt_standard_project_setup()
 
@@ -228,6 +228,7 @@ qt_add_qml_module(Dataform
         qml/ModelCatalogPanel.qml
         qml/VoiceBar.qml
         qml/VoiceSettingsPanel.qml
+        qml/SimpleChart.qml
 )
 
 target_link_libraries(Dataform PRIVATE
@@ -238,7 +239,6 @@ target_link_libraries(Dataform PRIVATE
     Qt6::Sql
     Qt6::QuickDialogs2
     Qt6::Widgets
-    Qt6::Charts
 )
 
 # Compiler warnings
