@@ -51,12 +51,16 @@ QList<SemanticSearchResult> EmbeddingManager::semanticSearch(
     QList<SemanticSearchResult> results;
     if (queryEmbedding.isEmpty()) return results;
 
+    // Normalise the query once rather than re-deriving its norm per candidate.
+    QVector<float> query = queryEmbedding;
+    normalizeInPlace(query);
+
     for (auto it = m_embeddingCache.constBegin(); it != m_embeddingCache.constEnd(); ++it) {
         if (!sourceTypes.isEmpty() && !sourceTypes.contains(it->sourceType)) {
             continue;
         }
 
-        double sim = cosineSimilarity(queryEmbedding, it->embedding);
+        double sim = dotProduct(query, it->embedding);
         results.append({it->sourceType, it->sourceId, sim});
     }
 
@@ -88,16 +92,19 @@ void EmbeddingManager::semanticSearchAsync(
     // so main-thread mutations to m_embeddingCache are safe.
     QMap<QString, EmbeddingRecord> cacheSnapshot = m_embeddingCache;
 
+    QVector<float> query = queryEmbedding;
+    normalizeInPlace(query);
+
     BackgroundJobManager::instance()->submit<QList<SemanticSearchResult>>(
         "semantic_search",
-        [cacheSnapshot = std::move(cacheSnapshot), queryEmbedding, sourceTypes, topK]()
+        [cacheSnapshot = std::move(cacheSnapshot), query, sourceTypes, topK]()
             -> QList<SemanticSearchResult> {
             QList<SemanticSearchResult> results;
             for (auto it = cacheSnapshot.constBegin(); it != cacheSnapshot.constEnd(); ++it) {
                 if (!sourceTypes.isEmpty() && !sourceTypes.contains(it->sourceType)) {
                     continue;
                 }
-                double sim = cosineSimilarity(queryEmbedding, it->embedding);
+                double sim = dotProduct(query, it->embedding);
                 results.append({it->sourceType, it->sourceId, sim});
             }
 
@@ -145,6 +152,7 @@ void EmbeddingManager::loadEmbeddingsFromDb()
         record.sourceId = sourceId;
         record.embedding = vec;
         record.dimension = dimension;
+        normalizeInPlace(record.embedding);
 
         m_embeddingCache.insert(cacheKey(sourceType, sourceId), record);
         ++loaded;
@@ -315,12 +323,14 @@ void EmbeddingManager::onNetworkReply(QNetworkReply *reply)
 
             storeEmbedding(sourceType, sourceId, model, embedding);
 
-            // Update in-memory cache
+            // Update in-memory cache. The DB keeps the raw vector; only the
+            // cache is normalised, so no stored data needs migrating.
             EmbeddingRecord record;
             record.sourceType = sourceType;
             record.sourceId = sourceId;
             record.embedding = embedding;
             record.dimension = embedding.size();
+            normalizeInPlace(record.embedding);
             m_embeddingCache.insert(cacheKey(sourceType, sourceId), record);
 
             m_embeddedCount = m_embeddingCache.size();
@@ -465,19 +475,26 @@ void EmbeddingManager::callEmbeddingApi(const QString &text, const QString &tag)
 
 // --- Math ---
 
-double EmbeddingManager::cosineSimilarity(const QVector<float> &a, const QVector<float> &b)
+void EmbeddingManager::normalizeInPlace(QVector<float> &vec)
+{
+    double norm = 0.0;
+    for (float v : vec) norm += static_cast<double>(v) * static_cast<double>(v);
+    norm = std::sqrt(norm);
+    if (norm <= 0.0) return;   // zero vector — leave it, it scores 0 against everything
+
+    const double inv = 1.0 / norm;
+    for (float &v : vec) v = static_cast<float>(static_cast<double>(v) * inv);
+}
+
+double EmbeddingManager::dotProduct(const QVector<float> &a, const QVector<float> &b)
 {
     if (a.size() != b.size() || a.isEmpty()) return 0.0;
 
-    double dotProduct = 0.0, normA = 0.0, normB = 0.0;
+    double sum = 0.0;
     for (int i = 0; i < a.size(); ++i) {
-        dotProduct += static_cast<double>(a[i]) * static_cast<double>(b[i]);
-        normA += static_cast<double>(a[i]) * static_cast<double>(a[i]);
-        normB += static_cast<double>(b[i]) * static_cast<double>(b[i]);
+        sum += static_cast<double>(a[i]) * static_cast<double>(b[i]);
     }
-
-    double denom = std::sqrt(normA) * std::sqrt(normB);
-    return (denom > 0.0) ? (dotProduct / denom) : 0.0;
+    return sum;
 }
 
 // --- DB operations ---

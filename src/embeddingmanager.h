@@ -108,8 +108,11 @@ private:
     // API call
     void callEmbeddingApi(const QString &text, const QString &tag);
 
-    // Math
-    static double cosineSimilarity(const QVector<float> &a, const QVector<float> &b);
+    // Math. Embeddings are unit-normalised on the way into the cache, so cosine
+    // similarity on the search path collapses to a plain dot product — no norms
+    // and no sqrt in the inner loop.
+    static void normalizeInPlace(QVector<float> &vec);
+    static double dotProduct(const QVector<float> &a, const QVector<float> &b);
 
     // DB operations
     void storeEmbedding(const QString &sourceType, qint64 sourceId,
