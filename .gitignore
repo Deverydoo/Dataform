@@ -1,6 +1,8 @@
 # Build output
 build/
 build_off/
+# Every other local build tree (build_cuda, build_voice, build_release, ...)
+build_*/
 
 # ONNX Runtime Training (large binaries from NuGet)
 # Keep only include/ headers; exclude extracted NuGet, binaries, zip
