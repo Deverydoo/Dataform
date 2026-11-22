@@ -1,0 +1,342 @@
+DATAFORM - Third-party notices
+==============================
+
+DATAFORM itself is covered by the DATAFORM Personal Use License (LICENSE).
+This file covers the third-party software shipped with the Windows build.
+The full license texts named below are in the licenses/ folder.
+
+
+1. Qt 6.10.1
+------------
+
+Files: Qt6*.dll, and everything under generic/, iconengines/, imageformats/,
+networkinformation/, platforms/, qml/, sqldrivers/, styles/ and tls/.
+
+Copyright (C) The Qt Company Ltd. and other contributors.
+https://www.qt.io/
+
+Most of Qt is used under the GNU Lesser General Public License version 3
+(licenses/LGPL-3.0-only.txt; it builds on licenses/GPL-3.0-only.txt).
+
+Qt Charts (Qt6Charts.dll, Qt6ChartsQml.dll and qml/QtCharts/) is offered by
+The Qt Company only under the GNU General Public License version 3 or a
+commercial Qt license. It is not available under the LGPL.
+
+The Qt libraries are unmodified builds from the official Qt 6.10.1 MSVC 2022
+x64 binaries. Their source code is available from
+https://download.qt.io/official_releases/qt/6.10/6.10.1/single/ and
+https://code.qt.io/. If you would like the source for the exact files shipped
+here, ask through the project's GitHub page and it will be provided.
+
+Replacing Qt: DATAFORM links Qt dynamically. To use a different or modified
+build of Qt, put your own Qt 6.10.x DLLs (built with MSVC 2022 for x64, and a
+Qt version binary compatible with 6.10) in place of the ones in this folder,
+together with the matching plugins and qml/ modules. DATAFORM's source code
+is published at https://github.com/Deverydoo/Dataform, so you can also rebuild
+it against any Qt version you like.
+
+Qt includes third-party components. Those built into the files shipped here,
+with their licenses and copyright notices as recorded in Qt's own software
+bill of materials:
+
+aglfn 1.7  [qtbase]
+  License: BSD-3-Clause
+  Copyright 2002, 2003, 2005, 2006, 2008, 2010, 2015 Adobe Systems
+
+blake2  [qtbase]
+  License: CC0-1.0 OR Apache-2.0
+  Copyright 2012, Samuel Neves <sneves@dei.uc.pt>
+
+d3d12memoryallocator  [qtbase]
+  License: MIT
+  Copyright (c) 2019-2022 Advanced Micro Devices, Inc. All rights reserved.
+
+doubleconversion 3.3.1  [qtbase]
+  License: BSD-3-Clause
+  Copyright 2006-2012, the V8 project authors
+
+easing  [qtbase]
+  License: BSD-3-Clause
+  Copyright (c) 2001 Robert Penner
+
+Freetype 2.14.1  [qtbase]
+  License: FTL OR GPL-2.0-only
+  Copyright (c) 2007-2014 Adobe Systems Incorporated
+  Copyright (c) 2004-2025 Albert Chin-A-Young
+  Copyright (c) 2018-2025 Armin Hasitzka, David Turner, Robert Wilhelm, and Werner Lemberg
+  Copyright (c) 2000 Computing Research Labs, New Mexico State University
+  Copyright (c) 1996-2025 David Turner, Robert Wilhelm, Dominik Röttsches, and Werner Lemberg
+  Copyright (c) 2004-2025 David Turner, Robert Wilhelm, Werner Lemberg and George Williams
+  Copyright (c) 2022-2025 David Turner, Robert Wilhelm, Werner Lemberg, and Moazin Khatti
+  Copyright (c) 2008-2025 David Turner, Robert Wilhelm, Werner Lemberg, and suzuki toshiya
+  Copyright (c) 2003-2025 David Turner, Robert Wilhelm, and Werner Lemberg
+  Copyright (c) 2005-2025 David Turner
+  Copyright (c) 2007-2025 Derek Clegg and Michael Toftdal
+  Copyright (c) 2007 Dmitry Timoshkov for Codeweavers
+  Copyright (c) 2001-2015 Francesco Zappa Nardelli
+  Copyright (c) 2005, 2007, 2008, 2013 George Williams
+  Copyright (c) 2013-2025 Google, Inc. Google Author(s) Behdad Esfahbod and Stuart Gill
+  Copyright (c) 2013-2022 Google, Inc.
+  Copyright (c) 2003 Huw D M Davies for Codeweavers
+  Copyright (c) 2010-2025 Joel Klinghed
+  Copyright (c) 1996-2025 Just van Rossum, David Turner, Robert Wilhelm, and Werner Lemberg
+  Copyright (c) 2003-2025 Masatake YAMATO and Redhat K.K.
+  Copyright (c) 2004-2025 Masatake YAMATO, Redhat K.K, David Turner, Robert Wilhelm, and Werner Lemberg
+  Copyright (c) 2019-2025 Nikhil Ramakrishnan, David Turner, Robert Wilhelm, and Werner Lemberg
+  Copyright (c) 2009-2025 Oran Agra and Mickey Gabel
+  Copyright (c) 2007-2025 Rahul Bhalerao <rahul.bhalerao@redhat.com>
+  Copyright (c) 2002-2025 Roberto Alameda
+  Copyright (c) 2015-2025 Werner Lemberg
+  Copyright (c) 2004-2025 suzuki toshiya, Masatake YAMATO, Red Hat K.K., David Turner, Robert Wilhelm, and Werner Lemberg
+  Copyright (c) 2019 nyorain
+  Copyright (c) 2022-2025 David Turner, Robert Wilhelm, Werner Lemberg, George Williams, and Dominik Röttsches
+  Copyright (C) 2009, 2023  Red Hat, Inc.
+
+freetype-bdf 2.14.1  [qtbase]
+  License: MIT
+  Copyright (c) 2000 Computing Research Labs, New Mexico State University
+  Copyright (c) 2001-2014 Francesco Zappa Nardelli
+
+freetype-pcf 2.14.1  [qtbase]
+  License: MIT AND MIT-open-group
+  Copyright (c) 2001, 2012 David Turner, Robert Wilhelm, and Werner Lemberg
+  Copyright (c) 2000-2014 Francesco Zappa Nardelli
+  Copyright (c) 1990, 1994, 1998 The Open Group
+
+freetype-zlib 2.14.1  [qtbase]
+  License: Zlib
+  Copyright (C) 1995-2024 Jean-loup Gailly and Mark Adler
+
+grayraster  [qtbase]
+  License: FTL OR GPL-2.0-only
+  Copyright 2000-2016 by David Turner, Robert Wilhelm, and Werner Lemberg.
+
+Harfbuzz 12.2.0  [qtbase]
+  License: MIT
+  Copyright © 2010-2022  Google, Inc.
+  Copyright © 2015-2020  Ebrahim Byagowi
+  Copyright © 2019,2020  Facebook, Inc.
+  Copyright © 2012,2015  Mozilla Foundation
+  Copyright © 2011  Codethink Limited
+  Copyright © 2008,2010  Nokia Corporation and/or its subsidiary(-ies)
+  Copyright © 2009  Keith Stribley
+  Copyright © 2011  Martin Hosken and SIL International
+  Copyright © 2007  Chris Wilson
+  Copyright © 2005,2006,2020,2021,2022,2023  Behdad Esfahbod
+  Copyright © 2004,2007,2008,2009,2010,2013,2021,2022,2023  Red Hat, Inc.
+  Copyright © 1998-2005  David Turner and Werner Lemberg
+  Copyright © 2016  Igalia S.L.
+  Copyright © 2022  Matthias Clasen
+  Copyright © 2018,2021  Khaled Hosny
+  Copyright © 2018,2019,2020  Adobe, Inc
+  Copyright © 2013-2015  Alexei Podtelezhnikov
+
+icc-srgb-color-profile  [qtbase]
+  License: LicenseRef-ICC-License
+  Copyright International Color Consortium, 2015
+
+Libjpeg 3.1.2  [qtbase]
+  License: IJG AND BSD-3-Clause
+  Copyright (C) 2009-2025 D. R. Commander
+  Copyright (C) 2015, 2020 Google, Inc.
+  Copyright (C) 2019-2020 Arm Limited
+  Copyright (C) 2015-2016, 2018 Matthieu Darbois
+  Copyright (C) 2011-2016 Siarhei Siamashka
+  Copyright (C) 2015 Intel Corporation
+  Copyright (C) 2013-2014 Linaro Limited
+  Copyright (C) 2013-2014 MIPS Technologies, Inc.
+  Copyright (C) 2009, 2012 Pierre Ossman for Cendio AB
+  Copyright (C) 2009-2011 Nokia Corporation and/or its subsidiary(-ies)
+  Copyright (C) 1999-2006 MIYASAKA Masaru
+  Copyright (C) 1999 Ken Murchison
+  Copyright (C) 1991-2020 Thomas G. Lane, Guido Vollbeding
+
+Libpng 1.6.50  [qtbase]
+  License: Libpng AND libpng-2.0
+  Copyright (c) 1995-2025 The PNG Reference Library Authors
+  Copyright (c) 2000-2025 Cosmin Truta
+  Copyright (c) 1998-2018 Glenn Randers-Pehrson
+  Copyright (c) 1996-1997 Andreas Dilger
+  Copyright (c) 1995-1996 Guy Eric Schalnat, Group 42, Inc.
+  Copyright (c) 2000-2017 Simon-Pierre Cadieux
+  Copyright (c) 2000-2017 Eric S. Raymond
+  Copyright (c) 2000-2017 Mans Rullgard
+  Copyright (c) 2000-2017 Gilles Vollant
+  Copyright (c) 2000-2017 James Yu
+  Copyright (c) 2000-2017 Mandar Sahastrabuddhe
+  Copyright (c) 1998-2000 Tom Lane
+  Copyright (c) 1998-2000 Willem van Schaik
+  Copyright (c) 1996-1997 John Bowler
+  Copyright (c) 1996-1997 Kevin Bracey
+  Copyright (c) 1996-1997 Sam Bushell
+  Copyright (c) 1996-1997 Magnus Holmgren
+  Copyright (c) 1996-1997 Greg Roelofs
+  Copyright (c) 1996-1997 Tom Tanner
+  Copyright (c) 1995-1996 Dave Martindale
+  Copyright (c) 1995-1996 Paul Schmidt
+  Copyright (c) 1995-1996 Tim Wegner
+
+libpsl  [qtbase]
+  License: BSD-3-Clause
+  Copyright 2014-2016 The Chromium Authors. All rights reserved.
+
+masm  [qtdeclarative]
+  License: BSD-2-Clause
+  Copyright (C) 2003-2018 Apple Inc. All rights reserved.
+  Copyright (C) 2007 Justin Haygood (jhaygood@reaktix.com)
+  Copyright (C) 2007-2009 Torch Mobile, Inc. All rights reserved. (http://www.torchmobile.com/)
+  Copyright (C) 2009, 2010 University of Szeged
+  Copyright (C) 2009-2011 STMicroelectronics. All rights reserved.
+  Copyright (C) 2010 MIPS Technologies, Inc. All rights reserved.
+  Copyright (C) 2010 Peter Varga (pvarga@inf.u-szeged.hu), University of Szeged
+  Copyright (C) 2010 MIPS Technologies, Inc. All rights reserved.
+  Copyright (C) 2010, 2011 Research In Motion Limited. All rights reserved.
+  Copyright (C) 2011 Google Inc. All rights reserved.
+  Copyright (C) 2013 Samsung Electronics. All rights reserved.
+  Copyright (C) 2015 Cisco Systems, Inc. All rights reserved.
+  Copyright (c) 2002-2009 Vivek Thampi
+
+md4  [qtbase]
+  License: CC0-1.0
+  Written by Alexander Peslyak - better known as Solar Designer <solar@openwall.com> - in 2001, and placed in the public domain. There's absolutely no warranty.
+
+md4c 0.5.2  [qtbase]
+  License: MIT
+  Copyright © 2016-2024 Martin Mitáš
+
+md5  [qtbase]
+  License: CC0-1.0
+  Written by Colin Plumb in 1993, no copyright is claimed. Ian Jackson <ian@chiark.greenend.org.uk>.
+
+opengl-headers Revision 27684  [qtbase]
+  License: MIT
+  Copyright (c) 2013-2014 The Khronos Group Inc.
+
+pcre2 10.47  [qtbase]
+  License: LicenseRef-BSD-3-Clause-with-PCRE2-Binary-Like-Packages-Exception
+  Copyright (c) 1997-2007 University of Cambridge
+  Copyright (c) 2007-2024 Philip Hazel
+  Copyright (c) 2010-2024 Zoltan Herczeg
+
+pcre2-sljit 10.47  [qtbase]
+  License: BSD-2-Clause
+  Copyright Zoltan Herczeg
+
+psl-data  [qtbase]
+  License: MPL-2.0
+  The list was originally provided by Jo Hermans <jo.hermans@gmail.com>.
+  It is now maintained on github (https://github.com/publicsuffix/list).
+
+rfc6234  [qtbase]
+  License: BSD-3-Clause
+  Copyright (c) 2011 IETF Trust and the persons identified as authors of the code.
+
+rhi-miniengine-d3d12-mipmap  [qtbase]
+  License: MIT
+  Copyright (c) 2015 Microsoft
+
+sha1  [qtbase]
+  License: LicenseRef-SHA1-Public-Domain
+  Copyright (C) Dominik Reichl <dominik.reichl@t-online.de>
+  Copyright (C) 2016 The Qt Company Ltd
+
+sha3_endian  [qtbase]
+  License: BSD-2-Clause
+  Copyright (c) 1998-2013, Brian Gladman, Worcester, UK. All rights reserved.
+
+sha3_keccak 3.2  [qtbase]
+  License: CC0-1.0
+  Guido Bertoni, Joan Daemen, Michaël Peeters and Gilles Van Assche.
+  To the extent possible under law, the implementers have waived all copyright
+  and related or neighboring rights to the source code in this file.
+
+shadow_angular_material  [qtdeclarative]
+  License: MIT
+  Copyright (c) 2014-2016 Google, Inc
+
+siphash  [qtbase]
+  License: CC0-1.0
+  Copyright (C) 2012-2014 Jean-Philippe Aumasson
+  Copyright (C) 2012-2014 Daniel J. Bernstein <djb@cr.yp.to>
+  Copyright (C) 2016 Intel Corporation
+
+smooth-scaling-algorithm  [qtbase]
+  License: BSD-2-Clause AND Imlib2
+  Copyright (C) 2004, 2005 Daniel M. Duley.
+  (C) Carsten Haitzler and various contributors.
+  (C) Willem Monsuwe <willem@stack.nl>
+
+sqlite 3.51.0  [qtbase]
+  License: blessing
+  The authors disclaim copyright to the source code. However, a license can be obtained if needed.
+
+tika-mimetypes  [qtbase]
+  License: Apache-2.0
+  Copyright 2025 The Apache Software Foundation
+
+tinycbor 0.6.1  [qtbase]
+  License: MIT
+  Copyright (C) 2015-2021 Intel Corporation
+
+tlexpected  [qtbase]
+  License: CC0-1.0
+  To the extent possible under law, Sy Brand has waived all copyright and related or neighboring rights to the expected library. This work is published from: United Kingdom.
+
+unicode-character-database 34  [qtbase]
+  License: Unicode-3.0
+  Copyright (C) 1991-2022 Unicode, Inc.
+
+unicode-cldr v47  [qtbase]
+  License: Unicode-3.0
+  Copyright (C) 2004-2025 Unicode, Inc.
+
+vulkanmemoryallocator 3.2.1  [qtbase]
+  License: MIT
+  Copyright (c) 2017-2025 Advanced Micro Devices, Inc. All rights reserved.
+
+webgradients  [qtbase]
+  License: MIT
+  Copyright (c) 2017 itmeo
+
+wintab  [qtbase]
+  License: LicenseRef-Lcs-Telegraphics
+  Copyright 1991-1998 by LCS/Telegraphics.
+
+xsvg  [qtsvg]
+  License: HPND-sell-variant
+  Copyright 2002 USC/Information Sciences Institute
+
+yoga 2.0.1  [qtdeclarative]
+  License: MIT
+  Copyright (c) Facebook, Inc. and its affiliates.
+  Copyright (c) Meta Platforms, Inc. and affiliates.
+
+ZLIB 1.3.1  [qtbase]
+  License: Zlib
+  (C) 1995-2024 Jean-loup Gailly and Mark Adler
+
+
+2. ONNX Runtime 1.30.0
+----------------------
+
+File: onnxruntime.dll
+
+Copyright (c) Microsoft Corporation.
+https://github.com/microsoft/onnxruntime
+
+Built from the v1.30.0 source tag with the training APIs enabled
+(--enable_training_apis), CPU only, without modification.
+Licensed under the MIT License (licenses/onnxruntime/LICENSE). ONNX Runtime
+contains third-party components listed in
+licenses/onnxruntime/ThirdPartyNotices.txt.
+
+
+3. Not included
+---------------
+
+DATAFORM talks to a language model you run or choose yourself (Ollama,
+LM Studio, OpenAI or Anthropic). No model weights are included. Models you
+download through the in-app catalog come with their own licenses, shown in
+the catalog.
+
+The Microsoft Visual C++ runtime is not included; see README_FIRST.txt.

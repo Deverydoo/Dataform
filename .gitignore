@@ -69,3 +69,6 @@ venv/
 Thumbs.db
 desktop.ini
 .DS_Store
+
+# Release packages made by tools/package_release.ps1
+dist/
