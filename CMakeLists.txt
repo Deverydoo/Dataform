@@ -179,11 +179,19 @@ if(DATAFORM_ENABLE_TRAINING)
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             "${OnnxRuntimeTraining_DLL_PATH}/onnxruntime.dll"
             "$<TARGET_FILE_DIR:Dataform>/onnxruntime.dll"
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            "${OnnxRuntimeTraining_DLL_PATH}/onnxruntime_providers_shared.dll"
-            "$<TARGET_FILE_DIR:Dataform>/onnxruntime_providers_shared.dll"
-        COMMENT "Copying ONNX Runtime DLLs to output directory"
+        COMMENT "Copying ONNX Runtime DLL to output directory"
     )
+
+    # Only some build configurations emit the shared-provider shim; a plain CPU
+    # build does not, and copying a file that is not there fails the build.
+    if(OnnxRuntimeTraining_HAS_PROVIDERS_SHARED)
+        add_custom_command(TARGET Dataform POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${OnnxRuntimeTraining_DLL_PATH}/onnxruntime_providers_shared.dll"
+                "$<TARGET_FILE_DIR:Dataform>/onnxruntime_providers_shared.dll"
+            COMMENT "Copying ONNX Runtime provider shim to output directory"
+        )
+    endif()
 endif()
 
 # --- llama.cpp linking ---
