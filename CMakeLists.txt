@@ -93,6 +93,8 @@ set(DATAFORM_CORE_SOURCES
     src/llmresponseparser.cpp
     src/toolregistry.h
     src/toolregistry.cpp
+    src/modelcatalog.h
+    src/modelcatalog.cpp
     src/idlejobcoordinator.h
     src/idlejobcoordinator.cpp
     src/threadsafeprogress.h
@@ -147,6 +149,7 @@ qt_add_qml_module(Dataform
         qml/MemoryPanel.qml
         qml/LineagePanel.qml
         qml/ConversationSidebar.qml
+        qml/ModelCatalogPanel.qml
 )
 
 target_link_libraries(Dataform PRIVATE

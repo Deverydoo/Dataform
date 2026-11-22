@@ -33,6 +33,7 @@
 #include "embeddingmanager.h"
 #include "distillationmanager.h"
 #include "toolregistry.h"
+#include "modelcatalog.h"
 #include "backgroundjobmanager.h"
 #include "idlejobcoordinator.h"
 
@@ -171,6 +172,9 @@ int main(int argc, char *argv[])
 
     // 20. Idle Job Coordinator — serializes engine activation (one at a time)
     IdleJobCoordinator idleJobCoordinator;
+
+    // 21. Model Catalog — curated GGUF downloads for the chat + background brains
+    ModelCatalog modelCatalog;
 
 #ifdef DATAFORM_TRAINING_ENABLED
     // 12. Tokenizer for ORT training (Phase 2)
@@ -766,6 +770,7 @@ int main(int argc, char *argv[])
     engine.rootContext()->setContextProperty("distillationManager", &distillationManager);
     engine.rootContext()->setContextProperty("toolRegistry", &toolRegistry);
     engine.rootContext()->setContextProperty("idleJobCoordinator", &idleJobCoordinator);
+    engine.rootContext()->setContextProperty("modelCatalog", &modelCatalog);
     engine.rootContext()->setContextProperty("jobManager", BackgroundJobManager::instance());
 
 #ifdef DATAFORM_TRAINING_ENABLED

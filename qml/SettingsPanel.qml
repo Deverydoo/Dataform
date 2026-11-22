@@ -261,6 +261,14 @@ Rectangle {
                                     contentItem: Text { text: parent.text; color: "#cccccc"; font.pixelSize: 12 }
                                     background: Rectangle { color: parent.hovered ? "#3e3e42" : "#2d2d30"; radius: 4; border.color: "#3e3e42" }
                                 }
+                                Button {
+                                    text: "Catalog…"
+                                    ToolTip.visible: hovered
+                                    ToolTip.text: "Browse and download curated local models"
+                                    onClicked: modelCatalogPanel.open()
+                                    contentItem: Text { text: parent.text; color: "#4ec9b0"; font.pixelSize: 12 }
+                                    background: Rectangle { color: parent.hovered ? "#3e3e42" : "#2d2d30"; radius: 4; border.color: "#4ec9b0" }
+                                }
                             }
 
                             // Connection test
@@ -561,6 +569,11 @@ Rectangle {
                                         text: "Browse..."
                                         onClicked: ggufFileDialog.open()
                                     }
+
+                                    Button {
+                                        text: "Catalog…"
+                                        onClicked: modelCatalogPanel.open()
+                                    }
                                 }
                             }
 
@@ -585,7 +598,7 @@ Rectangle {
 
                             Label {
                                 visible: bgModelSwitch.checked
-                                text: "Place .gguf files in models/background_llm/ and click Refresh. Recommended: 3B-8B Q8_0 models."
+                                text: "Use Catalog… to download a curated model, or place .gguf files in models/background_llm/ and click Refresh. Recommended: 3B-8B Q8_0 models."
                                 font.pixelSize: 11
                                 color: "#666666"
                                 Layout.fillWidth: true
@@ -2107,6 +2120,20 @@ Rectangle {
     }
 
     // === Dialogs ===
+
+    ModelCatalogPanel {
+        id: modelCatalogPanel
+        parent: Overlay.overlay
+
+        // A finished download can add a .gguf the background picker has not seen yet.
+        onModelInstalled: function(path) {
+            if (typeof llamaCppManager === "undefined") return
+            var models = llamaCppManager.availableModels()
+            bgModelCombo.model = models.length > 0 ? models : ["(no .gguf files found)"]
+            var idx = models.indexOf(llamaCppManager.loadedModelName())
+            if (idx >= 0) bgModelCombo.currentIndex = idx
+        }
+    }
 
     FileDialog {
         id: ggufFileDialog
