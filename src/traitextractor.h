@@ -11,6 +11,7 @@
 
 class LLMProviderManager;
 class MemoryStore;
+class SettingsManager;
 struct EpisodicRecord;
 
 struct ExtractedTrait {
@@ -37,6 +38,7 @@ public:
 
     void setLLMProvider(LLMProviderManager *provider);
     void setMemoryStore(MemoryStore *store);
+    void setSettingsManager(SettingsManager *settings);
 
     bool isExtracting() const { return m_isExtracting; }
     int extractionCount() const { return m_extractionCount; }
@@ -107,6 +109,7 @@ private:
 
     LLMProviderManager *m_llmProvider = nullptr;
     MemoryStore *m_memoryStore = nullptr;
+    SettingsManager *m_settingsManager = nullptr;
 
     void setStatus(const QString &status);
 
@@ -131,6 +134,15 @@ private:
     QString m_leanAnalyzedTs;
     bool m_isAnalyzingLean = false;
     QDateTime m_lastLeanAnalysis;
+
+    // Cycle pacing — brought in line with the other idle engines, which all back
+    // off after repeated failures and wait out a cooldown between cycles.
+    // The cooldown matches IDLE_SCAN_INTERVAL_MS on purpose: it formalises the
+    // pacing this engine already had rather than slowing extraction down.
+    int m_consecutiveErrors = 0;
+    QDateTime m_lastCycleEndTime;
+    static constexpr int MAX_CONSECUTIVE_ERRORS = 3;
+    static constexpr int CYCLE_COOLDOWN_SEC = IDLE_SCAN_INTERVAL_MS / 1000;
 };
 
 #endif // TRAITEXTRACTOR_H

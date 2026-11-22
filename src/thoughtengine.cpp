@@ -293,6 +293,12 @@ void ThoughtEngine::onIdleWindowOpened()
         return;
     }
 
+    // Thoughts are unprompted inferences drawn from the user's research and
+    // conversation history.
+    if (m_settingsManager->privacyBlocksInference()) {
+        return;
+    }
+
     resetDailyCounterIfNeeded();
 
     if (!canGenerateMore()) {

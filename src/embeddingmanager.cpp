@@ -176,6 +176,9 @@ bool EmbeddingManager::canStartCycle() const
 {
     if (!m_modelAvailable || m_isEmbedding) return false;
     if (!m_memoryStore) return false;
+    // Embedding ships episode text to the embedding endpoint and builds a
+    // searchable index of it — inference over the user's data.
+    if (m_settingsManager && m_settingsManager->privacyBlocksInference()) return false;
     if (m_lastCycleEndTime.isValid()
         && m_lastCycleEndTime.secsTo(QDateTime::currentDateTime()) < CYCLE_COOLDOWN_SEC) {
         return false;

@@ -121,6 +121,11 @@ bool DistillationManager::canStartCycle() const
     if (!m_settingsManager->distillationEnabled())
         return false;
 
+    // Distillation replays the user's episodes through the teacher model, which
+    // may be a cloud provider — the strongest case for honouring "minimal".
+    if (m_settingsManager->privacyBlocksInference())
+        return false;
+
     // Check daily limit
     if (m_lastCycleDate == QDate::currentDate() &&
         m_cyclesCompletedToday >= m_settingsManager->distillationDailyCycles() * MAX_PAIRS_PER_SESSION)

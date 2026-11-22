@@ -59,7 +59,7 @@ void GoalTracker::onIdleWindowClosed()
 bool GoalTracker::canStartCycle() const
 {
     if (!m_settingsManager || !m_settingsManager->goalsEnabled()) return false;
-    if (m_settingsManager && m_settingsManager->privacyLevel() == "minimal") return false;
+    if (m_settingsManager && m_settingsManager->privacyBlocksInference()) return false;
     if (!m_memoryStore || !m_llmProvider || !m_thoughtEngine) return false;
     if (m_isProcessing || m_paused) return false;
     // Error recovery: pause after too many consecutive errors

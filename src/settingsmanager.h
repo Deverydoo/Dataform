@@ -98,6 +98,12 @@ public:
     QString privacyLevel() const { return m_privacyLevel; }
     void setPrivacyLevel(const QString &level);
 
+    // True when the user has asked DATAFORM to stop deriving new inferences from
+    // their data. Every idle engine that analyses episodes must consult this
+    // before starting a cycle — it is the single definition of what "minimal"
+    // means, so the check cannot drift between engines.
+    Q_INVOKABLE bool privacyBlocksInference() const { return m_privacyLevel == QLatin1String("minimal"); }
+
     // Evolution settings (Phase 3)
     int populationSize() const { return m_populationSize; }
     void setPopulationSize(int size);

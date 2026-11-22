@@ -79,7 +79,7 @@ bool NewsEngine::canStartCycle() const
     if (m_consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) return false;
 
     // Privacy check
-    if (m_settingsManager->privacyLevel() == "minimal") return false;
+    if (m_settingsManager->privacyBlocksInference()) return false;
 
     // Daily limit
     if (m_cyclesCompletedToday >= m_settingsManager->maxNewsPerDay()) return false;

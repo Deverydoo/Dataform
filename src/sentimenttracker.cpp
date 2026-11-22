@@ -62,7 +62,7 @@ void SentimentTracker::onIdleWindowOpened()
 void SentimentTracker::analyzeSentiment(qint64 episodeId)
 {
     if (!m_memoryStore || !m_llmProvider) return;
-    if (m_settingsManager && m_settingsManager->privacyLevel() == "minimal") return;
+    if (m_settingsManager && m_settingsManager->privacyBlocksInference()) return;
     // Error recovery: skip analysis after too many consecutive errors
     if (m_consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) return;
     if (m_memoryStore->hasEpisodeSentiment(episodeId)) return;

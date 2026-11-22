@@ -217,6 +217,7 @@ int main(int argc, char *argv[])
     whyEngine.setMemoryStore(&memoryStore);
     traitExtractor.setLLMProvider(&llmProvider);
     traitExtractor.setMemoryStore(&memoryStore);
+    traitExtractor.setSettingsManager(&settingsManager);
     evalSuite.setMemoryStore(&memoryStore);
     idleScheduler.setMemoryStore(&memoryStore);
 

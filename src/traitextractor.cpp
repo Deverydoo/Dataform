@@ -3,6 +3,7 @@
 #include "llmresponseparser.h"
 #include "llmprovider.h"
 #include "memorystore.h"
+#include "settingsmanager.h"
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonArray>
@@ -76,6 +77,11 @@ void TraitExtractor::setMemoryStore(MemoryStore *store)
     }
 }
 
+void TraitExtractor::setSettingsManager(SettingsManager *settings)
+{
+    m_settingsManager = settings;
+}
+
 void TraitExtractor::setStatus(const QString &status)
 {
     m_lastStatus = status;
@@ -96,6 +102,18 @@ bool TraitExtractor::canStartCycle() const
 {
     if (!m_llmProvider || !m_memoryStore) return false;
     if (m_isExtracting) return false;
+
+    // Trait extraction derives a personality profile from stored conversations,
+    // which is exactly the inference "minimal" privacy is meant to stop.
+    if (m_settingsManager && m_settingsManager->privacyBlocksInference()) return false;
+
+    if (m_consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) return false;
+
+    if (m_lastCycleEndTime.isValid()
+        && m_lastCycleEndTime.secsTo(QDateTime::currentDateTime()) < CYCLE_COOLDOWN_SEC) {
+        return false;
+    }
+
     return true;
 }
 
@@ -438,6 +456,8 @@ void TraitExtractor::onExtractionResponse(const QString &response)
         setStatus("No traits parsed from response");
     }
 
+    m_consecutiveErrors = 0;
+    m_lastCycleEndTime = QDateTime::currentDateTime();
     m_isExtracting = false;
     m_currentExtractionEpisodeId = -1;
     emit isExtractingChanged();
@@ -453,6 +473,8 @@ void TraitExtractor::onExtractionError(const QString &error)
     setStatus(QString("Error: %1").arg(error));
     emit extractionError(error);
 
+    ++m_consecutiveErrors;
+    m_lastCycleEndTime = QDateTime::currentDateTime();
     m_isExtracting = false;
     m_currentExtractionEpisodeId = -1;
     emit isExtractingChanged();
