@@ -1267,11 +1267,11 @@ Rectangle {
                                 Item { Layout.fillWidth: true }
                             }
 
-                            // Compute budget
+                            // Idle budget (full idle — user away)
                             RowLayout {
                                 Layout.fillWidth: true
                                 spacing: 10
-                                Label { text: "Compute Budget:"; color: "#cccccc"; font.pixelSize: 13; Layout.preferredWidth: settingsRoot.labelWidth }
+                                Label { text: "Idle Budget:"; color: "#cccccc"; font.pixelSize: 13; Layout.preferredWidth: settingsRoot.labelWidth }
                                 Slider {
                                     id: budgetSlider
                                     Layout.fillWidth: true
@@ -1283,6 +1283,29 @@ Rectangle {
                                 }
                                 Label {
                                     text: Math.round(budgetSlider.value) + "%"
+                                    color: "#cccccc"
+                                    font.pixelSize: 13
+                                    Layout.preferredWidth: 45
+                                    horizontalAlignment: Text.AlignRight
+                                }
+                            }
+
+                            // Background budget (app not focused, user on PC)
+                            RowLayout {
+                                Layout.fillWidth: true
+                                spacing: 10
+                                Label { text: "Background Budget:"; color: "#cccccc"; font.pixelSize: 13; Layout.preferredWidth: settingsRoot.labelWidth }
+                                Slider {
+                                    id: bgBudgetSlider
+                                    Layout.fillWidth: true
+                                    from: 1
+                                    to: 25
+                                    stepSize: 1
+                                    value: settingsManager.backgroundBudgetPercent
+                                    onPressedChanged: if (!pressed) settingsManager.backgroundBudgetPercent = value
+                                }
+                                Label {
+                                    text: Math.round(bgBudgetSlider.value) + "%"
                                     color: "#cccccc"
                                     font.pixelSize: 13
                                     Layout.preferredWidth: 45

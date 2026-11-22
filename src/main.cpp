@@ -587,33 +587,34 @@ int main(int argc, char *argv[])
     // === Idle Job Coordinator: serializes engine activation (one at a time) ===
 
     // Register engines in priority order (lower = runs first)
-    idleJobCoordinator.registerEngine("TraitExtractor", 0,
+    // Light engines run in Background + Idle; Heavy engines run only in Idle
+    idleJobCoordinator.registerEngine("TraitExtractor", 0, IdleJobCoordinator::Light,
         [&]() { return traitExtractor.canStartCycle(); },
         [&]() { traitExtractor.requestStart(); });
-    idleJobCoordinator.registerEngine("ResearchEngine", 1,
+    idleJobCoordinator.registerEngine("ResearchEngine", 1, IdleJobCoordinator::Heavy,
         [&]() { return researchEngine.canStartCycle(); },
         [&]() { researchEngine.requestStart(); });
-    idleJobCoordinator.registerEngine("GoalTracker", 2,
+    idleJobCoordinator.registerEngine("GoalTracker", 2, IdleJobCoordinator::Heavy,
         [&]() { return goalTracker.canStartCycle(); },
         [&]() { goalTracker.requestStart(); });
-    idleJobCoordinator.registerEngine("NewsEngine", 2,
+    idleJobCoordinator.registerEngine("NewsEngine", 2, IdleJobCoordinator::Light,
         [&]() { return newsEngine.canStartCycle(); },
         [&]() { newsEngine.requestStart(); });
-    idleJobCoordinator.registerEngine("LearningEngine", 2,
+    idleJobCoordinator.registerEngine("LearningEngine", 2, IdleJobCoordinator::Heavy,
         [&]() { return learningEngine.canStartCycle(); },
         [&]() { learningEngine.requestStart(); });
-    idleJobCoordinator.registerEngine("EmbeddingManager", 3,
+    idleJobCoordinator.registerEngine("EmbeddingManager", 3, IdleJobCoordinator::Light,
         [&]() { return embeddingManager.canStartCycle(); },
         [&]() { embeddingManager.requestStart(); });
-    idleJobCoordinator.registerEngine("DistillationManager", 3,
+    idleJobCoordinator.registerEngine("DistillationManager", 3, IdleJobCoordinator::Heavy,
         [&]() { return distillationManager.canStartCycle(); },
         [&]() { distillationManager.requestStart(); });
 
-    // Connect idle scheduler to coordinator (NOT directly to engines)
-    QObject::connect(&idleScheduler, &IdleScheduler::idleWindowOpened,
-                     &idleJobCoordinator, &IdleJobCoordinator::onIdleWindowOpened);
-    QObject::connect(&idleScheduler, &IdleScheduler::idleWindowClosed,
-                     &idleJobCoordinator, &IdleJobCoordinator::onIdleWindowClosed);
+    // Connect idle scheduler activity state to coordinator (drives Background + Idle scheduling)
+    QObject::connect(&idleScheduler, &IdleScheduler::activityStateChanged,
+                     &idleJobCoordinator, [&]() {
+        idleJobCoordinator.onActivityStateChanged(idleScheduler.activityState());
+    });
 
     // Connect engine cycleFinished signals to coordinator
     QObject::connect(&traitExtractor, &TraitExtractor::cycleFinished,
@@ -665,35 +666,28 @@ int main(int argc, char *argv[])
     QObject::connect(&newsEngine, &NewsEngine::newsCycleComplete,
                      &thoughtEngine, &ThoughtEngine::onNewsCycleComplete);
 
-    // Engine idle state tracking (onIdleWindowOpened/Closed for m_idleWindowOpen flag only — no auto-start)
-    QObject::connect(&idleScheduler, &IdleScheduler::idleWindowOpened,
-                     &researchEngine, &ResearchEngine::onIdleWindowOpened);
-    QObject::connect(&idleScheduler, &IdleScheduler::idleWindowClosed,
-                     &researchEngine, &ResearchEngine::onIdleWindowClosed);
-    QObject::connect(&idleScheduler, &IdleScheduler::idleWindowOpened,
-                     &newsEngine, &NewsEngine::onIdleWindowOpened);
-    QObject::connect(&idleScheduler, &IdleScheduler::idleWindowClosed,
-                     &newsEngine, &NewsEngine::onIdleWindowClosed);
-    QObject::connect(&idleScheduler, &IdleScheduler::idleWindowOpened,
-                     &goalTracker, &GoalTracker::onIdleWindowOpened);
-    QObject::connect(&idleScheduler, &IdleScheduler::idleWindowClosed,
-                     &goalTracker, &GoalTracker::onIdleWindowClosed);
-    QObject::connect(&idleScheduler, &IdleScheduler::idleWindowOpened,
-                     &traitExtractor, &TraitExtractor::onIdleWindowOpened);
-    QObject::connect(&idleScheduler, &IdleScheduler::idleWindowClosed,
-                     &traitExtractor, &TraitExtractor::onIdleWindowClosed);
-    QObject::connect(&idleScheduler, &IdleScheduler::idleWindowOpened,
-                     &learningEngine, &LearningEngine::onIdleWindowOpened);
-    QObject::connect(&idleScheduler, &IdleScheduler::idleWindowClosed,
-                     &learningEngine, &LearningEngine::onIdleWindowClosed);
-    QObject::connect(&idleScheduler, &IdleScheduler::idleWindowOpened,
-                     &embeddingManager, &EmbeddingManager::onIdleWindowOpened);
-    QObject::connect(&idleScheduler, &IdleScheduler::idleWindowClosed,
-                     &embeddingManager, &EmbeddingManager::onIdleWindowClosed);
-    QObject::connect(&idleScheduler, &IdleScheduler::idleWindowOpened,
-                     &distillationManager, &DistillationManager::onIdleWindowOpened);
-    QObject::connect(&idleScheduler, &IdleScheduler::idleWindowClosed,
-                     &distillationManager, &DistillationManager::onIdleWindowClosed);
+    // Engine idle state tracking — coordinator-managed engines use activityState
+    // so their m_idleWindowOpen flag is set for both Background + Idle states
+    QObject::connect(&idleScheduler, &IdleScheduler::activityStateChanged, [&]() {
+        bool workWindow = idleScheduler.activityState() >= 1; // Background or Idle
+        if (workWindow) {
+            researchEngine.onIdleWindowOpened();
+            newsEngine.onIdleWindowOpened();
+            goalTracker.onIdleWindowOpened();
+            traitExtractor.onIdleWindowOpened();
+            learningEngine.onIdleWindowOpened();
+            embeddingManager.onIdleWindowOpened();
+            distillationManager.onIdleWindowOpened();
+        } else {
+            researchEngine.onIdleWindowClosed();
+            newsEngine.onIdleWindowClosed();
+            goalTracker.onIdleWindowClosed();
+            traitExtractor.onIdleWindowClosed();
+            learningEngine.onIdleWindowClosed();
+            embeddingManager.onIdleWindowClosed();
+            distillationManager.onIdleWindowClosed();
+        }
+    });
 
     // Start ReminderEngine polling timer
     reminderEngine.start();

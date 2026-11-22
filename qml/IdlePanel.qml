@@ -25,15 +25,20 @@ Rectangle {
 
         Item { Layout.fillWidth: true }
 
-        // Pulsing status indicator
+        // Pulsing status indicator (3-state)
         Rectangle {
             width: 10
             height: 10
             radius: 5
-            color: idleScheduler.isSchedulerActive ? "#4ec9b0" : "#858585"
+            color: {
+                var s = idleScheduler.activityState
+                if (s === 2) return "#4ec9b0"  // Idle: green
+                if (s === 1) return "#569cd6"  // Background: blue
+                return "#858585"                // Focused: gray
+            }
 
             SequentialAnimation on opacity {
-                running: idleScheduler.isSchedulerActive
+                running: idleScheduler.activityState > 0
                 loops: Animation.Infinite
                 NumberAnimation { to: 0.3; duration: 1000; easing.type: Easing.InOutSine }
                 NumberAnimation { to: 1.0; duration: 1000; easing.type: Easing.InOutSine }
@@ -80,9 +85,49 @@ Rectangle {
         Label {
             text: idleScheduler.schedulerStatus
             font.pixelSize: 13
-            color: idleScheduler.isSchedulerActive ? "#4ec9b0" : "#aaaaaa"
+            color: {
+                var s = idleScheduler.activityState
+                if (s === 2) return "#4ec9b0"  // Idle: green
+                if (s === 1) return "#569cd6"  // Background: blue
+                return "#aaaaaa"                // Focused: gray
+            }
             Layout.fillWidth: true
             wrapMode: Text.WordWrap
+        }
+
+        // Current task indicator
+        RowLayout {
+            spacing: 8
+            Layout.fillWidth: true
+            visible: idleJobCoordinator.activeEngine !== ""
+
+            Rectangle {
+                width: 8; height: 8; radius: 4
+                color: "#4ec9b0"
+
+                SequentialAnimation on opacity {
+                    running: idleJobCoordinator.activeEngine !== ""
+                    loops: Animation.Infinite
+                    NumberAnimation { to: 0.3; duration: 600; easing.type: Easing.InOutSine }
+                    NumberAnimation { to: 1.0; duration: 600; easing.type: Easing.InOutSine }
+                }
+            }
+
+            Label {
+                text: "Running: " + idleJobCoordinator.activeEngine
+                font.pixelSize: 13
+                font.bold: true
+                color: "#4ec9b0"
+                Layout.fillWidth: true
+            }
+        }
+
+        // No active task
+        Label {
+            text: "No active task"
+            font.pixelSize: 12
+            color: "#666666"
+            visible: idleJobCoordinator.activeEngine === "" && idleScheduler.activityState > 0
         }
 
         // Metrics grid
@@ -115,7 +160,12 @@ Rectangle {
 
             Label { text: "Budget:"; color: "#888888"; font.pixelSize: 12 }
             Label {
-                text: idleScheduler.computeBudgetPercent + "%"
+                text: {
+                    var s = idleScheduler.activityState
+                    if (s === 2) return idleScheduler.computeBudgetPercent + "% (idle)"
+                    if (s === 1) return settingsManager.backgroundBudgetPercent + "% (bg)"
+                    return idleScheduler.computeBudgetPercent + "%"
+                }
                 color: "#cccccc"
                 font.pixelSize: 12
             }

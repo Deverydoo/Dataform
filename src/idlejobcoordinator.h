@@ -17,14 +17,21 @@ public:
     explicit IdleJobCoordinator(QObject *parent = nullptr);
     ~IdleJobCoordinator();
 
+    enum EngineTier {
+        Light = 0,  // OK for Background + Idle states
+        Heavy = 1   // Idle state only
+    };
+    Q_ENUM(EngineTier)
+
     struct EngineEntry {
         QString name;
         int priority;                   // lower = runs first
+        EngineTier tier;                // Light = background OK, Heavy = idle only
         std::function<bool()> canStart; // engine's canStartCycle() check
         std::function<void()> start;    // calls engine's requestStart()
     };
 
-    void registerEngine(const QString &name, int priority,
+    void registerEngine(const QString &name, int priority, EngineTier tier,
                         std::function<bool()> canStart,
                         std::function<void()> start);
 
@@ -32,6 +39,7 @@ public:
     int pendingEngineCount() const;
 
 public slots:
+    void onActivityStateChanged(int state);
     void onIdleWindowOpened();
     void onIdleWindowClosed();
     void onEngineCycleFinished(const QString &name);
@@ -50,6 +58,7 @@ private:
     QString m_activeEngineName;
     bool m_idleWindowOpen = false;
     bool m_foregroundBusy = false;
+    int m_activityState = 0;            // 0=Focused, 1=Background, 2=Idle
     int m_currentIndex = 0;             // round-robin position
     QTimer *m_scheduleTimer = nullptr;
     QTimer *m_watchdogTimer = nullptr;

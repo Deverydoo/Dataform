@@ -36,16 +36,15 @@ void IdleScheduler::setEnabled(bool enabled)
     if (m_enabled != enabled) {
         m_enabled = enabled;
         emit enabledChanged();
-
-        if (!enabled && m_isSchedulerActive) {
-            m_isSchedulerActive = false;
-            emit isSchedulerActiveChanged();
-            emit idleWindowClosed();
-        }
-
-        m_schedulerStatus = buildStatusString();
-        emit schedulerStatusChanged();
+        evaluateConditions();
     }
+}
+
+void IdleScheduler::setWindowFocused(bool focused)
+{
+    if (m_windowFocused == focused) return;
+    m_windowFocused = focused;
+    evaluateConditions();
 }
 
 void IdleScheduler::start()
@@ -62,10 +61,15 @@ void IdleScheduler::stop()
 {
     m_pollTimer->stop();
 
-    if (m_isSchedulerActive) {
+    // Transition to Focused on stop
+    if (m_activityState == Idle) {
         m_isSchedulerActive = false;
         emit isSchedulerActiveChanged();
         emit idleWindowClosed();
+    }
+    if (m_activityState != Focused) {
+        m_activityState = Focused;
+        emit activityStateChanged();
     }
 
     m_schedulerStatus = "Stopped";
@@ -75,20 +79,14 @@ void IdleScheduler::stop()
 
 void IdleScheduler::pauseImmediately()
 {
-    // Called on any user interaction for instant deactivation
-    if (m_isSchedulerActive) {
-        m_isSchedulerActive = false;
-        m_schedulerStatus = "Paused - user active";
-        emit isSchedulerActiveChanged();
-        emit schedulerStatusChanged();
-        emit idleWindowClosed();
-    }
-
     // Reset idle time tracking
     m_idleTimeSeconds = 0;
     m_isIdle = false;
     emit idleTimeSecondsChanged();
     emit isIdleChanged();
+
+    // Re-evaluate — will transition to Focused or Background based on window state
+    evaluateConditions();
 }
 
 void IdleScheduler::pollSystemState()
@@ -128,29 +126,44 @@ void IdleScheduler::pollSystemState()
     evaluateConditions();
 }
 
+IdleScheduler::ActivityState IdleScheduler::computeActivityState() const
+{
+    if (!m_enabled) return Focused;        // Disabled = no background work
+    if (m_windowFocused) return Focused;   // Window active = user interacting
+    if (m_isIdle && m_isPluggedIn
+        && (m_cpuTemperature < THERMAL_LIMIT_CELSIUS || m_cpuTemperature == 0.0))
+        return Idle;                       // Full idle conditions met
+    return Background;                     // Window not focused, user still on PC
+}
+
 void IdleScheduler::evaluateConditions()
 {
-    bool shouldBeActive = m_enabled
-                          && m_isIdle
-                          && m_isPluggedIn
-                          && (m_cpuTemperature < THERMAL_LIMIT_CELSIUS || m_cpuTemperature == 0.0);
+    ActivityState newState = computeActivityState();
 
-    if (shouldBeActive && !m_isSchedulerActive) {
-        m_isSchedulerActive = true;
-        m_schedulerStatus = "Active - idle window open";
-        emit isSchedulerActiveChanged();
-        emit schedulerStatusChanged();
-        emit idleWindowOpened();
-        qDebug() << "Idle window OPENED - conditions met for background work";
-    } else if (!shouldBeActive && m_isSchedulerActive) {
-        m_isSchedulerActive = false;
+    if (newState != m_activityState) {
+        ActivityState oldState = m_activityState;
+        m_activityState = newState;
+
+        // Legacy backward compat: idleWindowOpened/Closed only on Idle transitions
+        if (newState == Idle && oldState != Idle) {
+            m_isSchedulerActive = true;
+            emit isSchedulerActiveChanged();
+            emit idleWindowOpened();
+            qDebug() << "Idle window OPENED - full idle conditions met";
+        } else if (oldState == Idle && newState != Idle) {
+            m_isSchedulerActive = false;
+            emit isSchedulerActiveChanged();
+            emit idleWindowClosed();
+            qDebug() << "Idle window CLOSED - transitioning to" << newState;
+        }
+
         m_schedulerStatus = buildStatusString();
-        emit isSchedulerActiveChanged();
         emit schedulerStatusChanged();
-        emit idleWindowClosed();
-        qDebug() << "Idle window CLOSED -" << m_schedulerStatus;
-    } else if (!m_isSchedulerActive) {
-        // Update status string even when not transitioning
+        emit activityStateChanged();
+
+        qDebug() << "ActivityState:" << oldState << "->" << newState;
+    } else {
+        // Update status string even without state transition
         QString newStatus = buildStatusString();
         if (m_schedulerStatus != newStatus) {
             m_schedulerStatus = newStatus;
@@ -162,12 +175,19 @@ void IdleScheduler::evaluateConditions()
 QString IdleScheduler::buildStatusString() const
 {
     if (!m_enabled) return "Disabled";
-    if (m_isSchedulerActive) return "Active - idle window open";
+    switch (m_activityState) {
+    case Idle:
+        return "Active - idle window open";
+    case Background:
+        return "Background - light tasks";
+    case Focused:
+        break;
+    }
     if (!m_isIdle) return QString("Waiting - user active (%1s idle)").arg(m_idleTimeSeconds);
     if (!m_isPluggedIn) return "Waiting - on battery";
     if (m_cpuTemperature >= THERMAL_LIMIT_CELSIUS && m_cpuTemperature > 0.0)
         return QString("Waiting - thermal limit (%1C)").arg(m_cpuTemperature, 0, 'f', 1);
-    return "Monitoring";
+    return "Focused";
 }
 
 int IdleScheduler::queryIdleTimeMs() const

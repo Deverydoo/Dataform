@@ -18,8 +18,16 @@ class IdleScheduler : public QObject
     Q_PROPERTY(int computeBudgetPercent READ computeBudgetPercent WRITE setComputeBudgetPercent NOTIFY computeBudgetPercentChanged)
     Q_PROPERTY(QString schedulerStatus READ schedulerStatus NOTIFY schedulerStatusChanged)
     Q_PROPERTY(bool enabled READ enabled WRITE setEnabled NOTIFY enabledChanged)
+    Q_PROPERTY(int activityState READ activityState NOTIFY activityStateChanged)
 
 public:
+    enum ActivityState {
+        Focused = 0,    // Window active, no background work
+        Background = 1, // Window not focused, user on PC, light tasks only
+        Idle = 2        // User away, all tasks OK
+    };
+    Q_ENUM(ActivityState)
+
     explicit IdleScheduler(QObject *parent = nullptr);
     ~IdleScheduler();
 
@@ -33,6 +41,7 @@ public:
     int computeBudgetPercent() const { return m_computeBudgetPercent; }
     QString schedulerStatus() const { return m_schedulerStatus; }
     bool enabled() const { return m_enabled; }
+    int activityState() const { return m_activityState; }
 
     void setComputeBudgetPercent(int percent);
     void setEnabled(bool enabled);
@@ -40,6 +49,7 @@ public:
     Q_INVOKABLE void start();
     Q_INVOKABLE void stop();
     Q_INVOKABLE void pauseImmediately();
+    Q_INVOKABLE void setWindowFocused(bool focused);
 
 signals:
     void isIdleChanged();
@@ -50,8 +60,9 @@ signals:
     void computeBudgetPercentChanged();
     void schedulerStatusChanged();
     void enabledChanged();
+    void activityStateChanged();
 
-    // Emitted when conditions are right for background work
+    // Legacy signals — emitted on Idle state transitions for direct-wired engines
     void idleWindowOpened();
     void idleWindowClosed();
 
@@ -60,6 +71,7 @@ private slots:
 
 private:
     void evaluateConditions();
+    ActivityState computeActivityState() const;
     int queryIdleTimeMs() const;
     bool queryPluggedIn() const;
     double queryCpuTemperature() const;
@@ -71,6 +83,8 @@ private:
     bool m_isIdle = false;
     bool m_isPluggedIn = true;
     bool m_isSchedulerActive = false;
+    bool m_windowFocused = true;
+    ActivityState m_activityState = Focused;
     double m_cpuTemperature = 0.0;
     int m_idleTimeSeconds = 0;
     int m_computeBudgetPercent = 10;

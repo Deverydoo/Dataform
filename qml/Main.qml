@@ -12,6 +12,8 @@ ApplicationWindow {
     title: "DATAFORM by GHI"
     color: "#1e1e1e"
 
+    onActiveChanged: idleScheduler.setWindowFocused(active)
+
     property int currentView: 0 // 0 = Dashboard, 1 = Settings, 2 = Lineage
 
     // Keyboard shortcuts
@@ -75,7 +77,7 @@ ApplicationWindow {
 
             Item { Layout.fillWidth: true }
 
-            // Idle status indicator
+            // Activity state indicator
             RowLayout {
                 spacing: 8
                 Layout.alignment: Qt.AlignVCenter
@@ -84,10 +86,15 @@ ApplicationWindow {
                     width: 8
                     height: 8
                     radius: 4
-                    color: idleScheduler.isSchedulerActive ? "#4ec9b0" : "#858585"
+                    color: {
+                        var s = idleScheduler.activityState
+                        if (s === 2) return "#4ec9b0"  // Idle: green
+                        if (s === 1) return "#569cd6"  // Background: blue
+                        return "#858585"                // Focused: gray
+                    }
 
                     SequentialAnimation on opacity {
-                        running: idleScheduler.isSchedulerActive
+                        running: idleScheduler.activityState > 0
                         loops: Animation.Infinite
                         NumberAnimation { to: 0.4; duration: 800; easing.type: Easing.InOutQuad }
                         NumberAnimation { to: 1.0; duration: 800; easing.type: Easing.InOutQuad }
@@ -95,7 +102,12 @@ ApplicationWindow {
                 }
 
                 Label {
-                    text: "Idle: " + (idleScheduler.isSchedulerActive ? "Active" : "Standby")
+                    text: {
+                        var s = idleScheduler.activityState
+                        if (s === 2) return "Idle: Active"
+                        if (s === 1) return "Background"
+                        return "Standby"
+                    }
                     font.pixelSize: 11
                     color: "#aaaaaa"
                 }

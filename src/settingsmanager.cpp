@@ -112,6 +112,16 @@ void SettingsManager::setComputeBudgetPercent(int percent)
     }
 }
 
+void SettingsManager::setBackgroundBudgetPercent(int percent)
+{
+    percent = qBound(1, percent, 25);
+    if (m_backgroundBudgetPercent != percent) {
+        m_backgroundBudgetPercent = percent;
+        emit backgroundBudgetPercentChanged();
+        saveSettings();
+    }
+}
+
 void SettingsManager::setPrivacyLevel(const QString &level)
 {
     if (m_privacyLevel != level) {
@@ -421,6 +431,7 @@ void SettingsManager::saveSettings()
     // DATAFORM settings
     json["idleLearningEnabled"] = m_idleLearningEnabled;
     json["computeBudgetPercent"] = m_computeBudgetPercent;
+    json["backgroundBudgetPercent"] = m_backgroundBudgetPercent;
     json["privacyLevel"] = m_privacyLevel;
     // Evolution settings (Phase 3)
     json["populationSize"] = m_populationSize;
@@ -501,6 +512,7 @@ void SettingsManager::loadSettings()
             m_ollamaUrl = json.value("ollamaUrl").toString("http://localhost:11434");
             m_idleLearningEnabled = json.value("idleLearningEnabled").toBool(true);
             m_computeBudgetPercent = json.value("computeBudgetPercent").toInt(10);
+            m_backgroundBudgetPercent = json.value("backgroundBudgetPercent").toInt(5);
             m_privacyLevel = json.value("privacyLevel").toString("standard");
             m_populationSize = json.value("populationSize").toInt(4);
             m_evolutionEnabled = json.value("evolutionEnabled").toBool(true);
@@ -565,6 +577,7 @@ void SettingsManager::loadSettings()
     emit ollamaUrlChanged();
     emit idleLearningEnabledChanged();
     emit computeBudgetPercentChanged();
+    emit backgroundBudgetPercentChanged();
     emit privacyLevelChanged();
     emit populationSizeChanged();
     emit evolutionEnabledChanged();
@@ -607,6 +620,7 @@ void SettingsManager::resetToDefaults()
     m_ollamaUrl = "http://localhost:11434";
     m_idleLearningEnabled = true;
     m_computeBudgetPercent = 10;
+    m_backgroundBudgetPercent = 5;
     m_privacyLevel = "standard";
     m_populationSize = 4;
     m_evolutionEnabled = true;
@@ -643,6 +657,7 @@ void SettingsManager::resetToDefaults()
     emit ollamaUrlChanged();
     emit idleLearningEnabledChanged();
     emit computeBudgetPercentChanged();
+    emit backgroundBudgetPercentChanged();
     emit privacyLevelChanged();
     emit populationSizeChanged();
     emit evolutionEnabledChanged();

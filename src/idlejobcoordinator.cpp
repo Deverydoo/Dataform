@@ -17,11 +17,11 @@ IdleJobCoordinator::~IdleJobCoordinator()
 {
 }
 
-void IdleJobCoordinator::registerEngine(const QString &name, int priority,
+void IdleJobCoordinator::registerEngine(const QString &name, int priority, EngineTier tier,
                                          std::function<bool()> canStart,
                                          std::function<void()> start)
 {
-    EngineEntry entry{name, priority, canStart, start};
+    EngineEntry entry{name, priority, tier, canStart, start};
 
     // Insert sorted by priority (lower = higher priority)
     int insertAt = m_engines.size();
@@ -33,6 +33,40 @@ void IdleJobCoordinator::registerEngine(const QString &name, int priority,
     }
     m_engines.insert(insertAt, entry);
     emit pendingEngineCountChanged();
+}
+
+void IdleJobCoordinator::onActivityStateChanged(int state)
+{
+    int oldState = m_activityState;
+    m_activityState = state;
+
+    if (state == 0) {
+        // Focused: stop scheduling
+        m_idleWindowOpen = false;
+        m_scheduleTimer->stop();
+        if (m_activeEngineName.isEmpty()) {
+            m_watchdogTimer->stop();
+        }
+        qDebug() << "IdleJobCoordinator: Focused — scheduling paused";
+    } else if (state >= 1) {
+        // Background (1) or Idle (2): allow scheduling
+        if (!m_idleWindowOpen) {
+            m_idleWindowOpen = true;
+            m_currentIndex = 0;
+        }
+        if (m_activeEngineName.isEmpty() && !m_foregroundBusy) {
+            scheduleNextEngine();
+        }
+        qDebug() << "IdleJobCoordinator: state" << state
+                 << (state == 1 ? "(Background — light engines)" : "(Idle — all engines)");
+    }
+
+    // If we transitioned from Background to Idle (or vice versa) while an engine
+    // is idle, reschedule — heavier engines may now be available
+    if (oldState >= 1 && state >= 1 && oldState != state
+        && m_activeEngineName.isEmpty() && !m_foregroundBusy) {
+        m_scheduleTimer->start(INTER_ENGINE_DELAY_MS);
+    }
 }
 
 int IdleJobCoordinator::pendingEngineCount() const
@@ -128,7 +162,10 @@ void IdleJobCoordinator::onEngineTimeout()
 void IdleJobCoordinator::scheduleNextEngine()
 {
     if (!m_idleWindowOpen || m_foregroundBusy) return;
+    if (m_activityState == 0) return; // Focused = no scheduling
     if (!m_activeEngineName.isEmpty()) return; // already running
+
+    bool backgroundOnly = (m_activityState == 1);
 
     // Try each engine starting from current index
     int tried = 0;
@@ -138,12 +175,17 @@ void IdleJobCoordinator::scheduleNextEngine()
         tried++;
 
         const EngineEntry &entry = m_engines[idx];
+
+        // Skip heavy engines in Background state
+        if (backgroundOnly && entry.tier == Heavy) continue;
+
         if (entry.canStart && entry.canStart()) {
             m_activeEngineName = entry.name;
             emit activeEngineChanged();
             emit pendingEngineCountChanged();
-            qDebug() << "IdleJobCoordinator: activating engine" << entry.name
-                     << "(priority:" << entry.priority << ")";
+            qDebug() << "IdleJobCoordinator: activating" << entry.name
+                     << "(priority:" << entry.priority
+                     << ", tier:" << (entry.tier == Light ? "Light" : "Heavy") << ")";
             m_watchdogTimer->start(ENGINE_TIMEOUT_MS);
             entry.start();
             return;

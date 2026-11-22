@@ -20,6 +20,7 @@ class SettingsManager : public QObject
     // DATAFORM-specific settings
     Q_PROPERTY(bool idleLearningEnabled READ idleLearningEnabled WRITE setIdleLearningEnabled NOTIFY idleLearningEnabledChanged)
     Q_PROPERTY(int computeBudgetPercent READ computeBudgetPercent WRITE setComputeBudgetPercent NOTIFY computeBudgetPercentChanged)
+    Q_PROPERTY(int backgroundBudgetPercent READ backgroundBudgetPercent WRITE setBackgroundBudgetPercent NOTIFY backgroundBudgetPercentChanged)
     Q_PROPERTY(QString privacyLevel READ privacyLevel WRITE setPrivacyLevel NOTIFY privacyLevelChanged)
     Q_PROPERTY(int populationSize READ populationSize WRITE setPopulationSize NOTIFY populationSizeChanged)
     Q_PROPERTY(bool evolutionEnabled READ evolutionEnabled WRITE setEvolutionEnabled NOTIFY evolutionEnabledChanged)
@@ -90,6 +91,9 @@ public:
 
     int computeBudgetPercent() const { return m_computeBudgetPercent; }
     void setComputeBudgetPercent(int percent);
+
+    int backgroundBudgetPercent() const { return m_backgroundBudgetPercent; }
+    void setBackgroundBudgetPercent(int percent);
 
     QString privacyLevel() const { return m_privacyLevel; }
     void setPrivacyLevel(const QString &level);
@@ -192,6 +196,7 @@ signals:
     void ollamaUrlChanged();
     void idleLearningEnabledChanged();
     void computeBudgetPercentChanged();
+    void backgroundBudgetPercentChanged();
     void privacyLevelChanged();
     void populationSizeChanged();
     void evolutionEnabledChanged();
@@ -234,6 +239,7 @@ private:
     QString m_ollamaUrl;
     bool m_idleLearningEnabled;
     int m_computeBudgetPercent;
+    int m_backgroundBudgetPercent = 5;
     QString m_privacyLevel;
     int m_populationSize;
     bool m_evolutionEnabled;
