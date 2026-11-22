@@ -14,7 +14,7 @@ qt_standard_project_setup()
 option(DATAFORM_ENABLE_TRAINING "Enable ONNX Runtime Training support" ON)
 
 # --- llama.cpp embedded inference (optional) ---
-option(DATAFORM_ENABLE_LLAMACPP "Enable embedded llama.cpp inference for background tasks" OFF)
+option(DATAFORM_ENABLE_LLAMACPP "Enable embedded llama.cpp inference for background tasks" ON)
 
 # --- Voice loop: Muninn speech recognition + local speech synthesis (optional) ---
 #
@@ -22,6 +22,16 @@ option(DATAFORM_ENABLE_LLAMACPP "Enable embedded llama.cpp inference for backgro
 # alongside Loki Studio, so a clone of this project on a fresh machine has to
 # still configure and build.
 option(DATAFORM_ENABLE_VOICE "Enable the spoken assistant loop (requires Muninn)" ON)
+
+# The internal brain is worth little on CPU — background trait/sentiment/research
+# passes are the whole point of running a second model. Build the CUDA backend
+# when a toolkit is present, and fall back to CPU with a loud warning when not.
+option(DATAFORM_ENABLE_CUDA "Build llama.cpp with the CUDA backend" ON)
+
+# "native" targets only the GPU in this machine, which keeps the ggml-cuda
+# compile from building kernels for every architecture NVIDIA ever shipped.
+set(DATAFORM_CUDA_ARCHITECTURES "native" CACHE STRING
+    "CUDA architectures for the llama.cpp backend (e.g. native, 89, 86;89)")
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake")
 
@@ -46,6 +56,23 @@ if(DATAFORM_ENABLE_VOICE)
 endif()
 
 if(DATAFORM_ENABLE_LLAMACPP)
+    if(DATAFORM_ENABLE_CUDA)
+        include(CheckLanguage)
+        check_language(CUDA)
+        if(CMAKE_CUDA_COMPILER)
+            if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES)
+                set(CMAKE_CUDA_ARCHITECTURES ${DATAFORM_CUDA_ARCHITECTURES})
+            endif()
+            set(GGML_CUDA ON CACHE BOOL "" FORCE)
+            message(STATUS "DATAFORM: llama.cpp CUDA backend ON "
+                           "(arch=${CMAKE_CUDA_ARCHITECTURES}, nvcc=${CMAKE_CUDA_COMPILER})")
+        else()
+            message(WARNING
+                "DATAFORM: CUDA Toolkit not found — the background model will run on CPU. "
+                "Install the CUDA Toolkit or configure with -DDATAFORM_ENABLE_CUDA=OFF to silence this.")
+        endif()
+    endif()
+
     set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
     set(LLAMA_BUILD_COMMON OFF CACHE BOOL "" FORCE)
     set(LLAMA_BUILD_TESTS OFF CACHE BOOL "" FORCE)
