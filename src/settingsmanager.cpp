@@ -407,6 +407,143 @@ void SettingsManager::setEncryptionMode(const QString &mode)
     }
 }
 
+// --- Voice ---
+
+void SettingsManager::setVoiceEnabled(bool enabled)
+{
+    if (m_voiceEnabled != enabled) {
+        m_voiceEnabled = enabled;
+        emit voiceEnabledChanged();
+        saveSettings();
+    }
+}
+
+void SettingsManager::setSpeakReplies(bool enabled)
+{
+    if (m_speakReplies != enabled) {
+        m_speakReplies = enabled;
+        emit speakRepliesChanged();
+        saveSettings();
+    }
+}
+
+void SettingsManager::setSttModelPath(const QString &path)
+{
+    if (m_sttModelPath != path) {
+        m_sttModelPath = path;
+        emit sttModelPathChanged();
+        saveSettings();
+    }
+}
+
+void SettingsManager::setSttDevice(const QString &device)
+{
+    QString d = device.toLower();
+    if (d != "cuda" && d != "cpu" && d != "auto") d = "cuda";
+    if (m_sttDevice != d) {
+        m_sttDevice = d;
+        emit sttDeviceChanged();
+        saveSettings();
+    }
+}
+
+void SettingsManager::setSttComputeType(const QString &computeType)
+{
+    QString c = computeType.toLower();
+    if (c != "float16" && c != "int8" && c != "float32") c = "float16";
+    if (m_sttComputeType != c) {
+        m_sttComputeType = c;
+        emit sttComputeTypeChanged();
+        saveSettings();
+    }
+}
+
+void SettingsManager::setSttLanguage(const QString &language)
+{
+    if (m_sttLanguage != language) {
+        m_sttLanguage = language;
+        emit sttLanguageChanged();
+        saveSettings();
+    }
+}
+
+void SettingsManager::setSttVadModelPath(const QString &path)
+{
+    if (m_sttVadModelPath != path) {
+        m_sttVadModelPath = path;
+        emit sttVadModelPathChanged();
+        saveSettings();
+    }
+}
+
+void SettingsManager::setMicDeviceName(const QString &name)
+{
+    if (m_micDeviceName != name) {
+        m_micDeviceName = name;
+        emit micDeviceNameChanged();
+        saveSettings();
+    }
+}
+
+void SettingsManager::setTtsBackend(const QString &backend)
+{
+    QString b = backend.toLower();
+    if (b != "piper" && b != "sapi" && b != "none") b = "piper";
+    if (m_ttsBackend != b) {
+        m_ttsBackend = b;
+        emit ttsBackendChanged();
+        saveSettings();
+    }
+}
+
+void SettingsManager::setPiperExePath(const QString &path)
+{
+    if (m_piperExePath != path) {
+        m_piperExePath = path;
+        emit piperExePathChanged();
+        saveSettings();
+    }
+}
+
+void SettingsManager::setPiperVoicePath(const QString &path)
+{
+    if (m_piperVoicePath != path) {
+        m_piperVoicePath = path;
+        emit piperVoicePathChanged();
+        saveSettings();
+    }
+}
+
+void SettingsManager::setSapiVoiceName(const QString &name)
+{
+    if (m_sapiVoiceName != name) {
+        m_sapiVoiceName = name;
+        emit sapiVoiceNameChanged();
+        saveSettings();
+    }
+}
+
+void SettingsManager::setTtsSpeed(double speed)
+{
+    // Piper reads this as a length scale, where values far from 1 are unusable.
+    const double s = qBound(0.5, speed, 2.0);
+    if (!qFuzzyCompare(m_ttsSpeed, s)) {
+        m_ttsSpeed = s;
+        emit ttsSpeedChanged();
+        saveSettings();
+    }
+}
+
+void SettingsManager::setAssistantName(const QString &name)
+{
+    const QString n = name.trimmed();
+    if (!n.isEmpty() && m_assistantName != n) {
+        m_assistantName = n;
+        emit assistantNameChanged();
+        saveSettings();
+    }
+}
+
 // --- Persistence ---
 
 QString SettingsManager::getConfigFilePath() const
@@ -475,6 +612,21 @@ void SettingsManager::saveSettings()
     json["distillationDailyCycles"] = m_distillationDailyCycles;
     // Security
     json["encryptionMode"] = m_encryptionMode;
+    // Voice
+    json["voiceEnabled"] = m_voiceEnabled;
+    json["speakReplies"] = m_speakReplies;
+    json["sttModelPath"] = m_sttModelPath;
+    json["sttDevice"] = m_sttDevice;
+    json["sttComputeType"] = m_sttComputeType;
+    json["sttLanguage"] = m_sttLanguage;
+    json["sttVadModelPath"] = m_sttVadModelPath;
+    json["micDeviceName"] = m_micDeviceName;
+    json["ttsBackend"] = m_ttsBackend;
+    json["piperExePath"] = m_piperExePath;
+    json["piperVoicePath"] = m_piperVoicePath;
+    json["sapiVoiceName"] = m_sapiVoiceName;
+    json["ttsSpeed"] = m_ttsSpeed;
+    json["assistantName"] = m_assistantName;
 
     QJsonDocument doc(json);
     QFile file(getConfigFilePath());
@@ -559,6 +711,30 @@ void SettingsManager::loadSettings()
             if (m_encryptionMode != "portable" && m_encryptionMode != "machine_locked")
                 m_encryptionMode = "portable";
 
+            m_voiceEnabled = json.value("voiceEnabled").toBool(false);
+            m_speakReplies = json.value("speakReplies").toBool(true);
+            m_sttModelPath = json.value("sttModelPath").toString();
+            m_sttDevice = json.value("sttDevice").toString("cuda");
+            if (m_sttDevice != "cuda" && m_sttDevice != "cpu" && m_sttDevice != "auto")
+                m_sttDevice = "cuda";
+            m_sttComputeType = json.value("sttComputeType").toString("float16");
+            if (m_sttComputeType != "float16" && m_sttComputeType != "int8"
+                && m_sttComputeType != "float32")
+                m_sttComputeType = "float16";
+            m_sttLanguage = json.value("sttLanguage").toString("en");
+            m_sttVadModelPath = json.value("sttVadModelPath").toString();
+            m_micDeviceName = json.value("micDeviceName").toString();
+            m_ttsBackend = json.value("ttsBackend").toString("piper");
+            if (m_ttsBackend != "piper" && m_ttsBackend != "sapi" && m_ttsBackend != "none")
+                m_ttsBackend = "piper";
+            m_piperExePath = json.value("piperExePath").toString();
+            m_piperVoicePath = json.value("piperVoicePath").toString();
+            m_sapiVoiceName = json.value("sapiVoiceName").toString();
+            m_ttsSpeed = qBound(0.5, json.value("ttsSpeed").toDouble(1.0), 2.0);
+            m_assistantName = json.value("assistantName").toString("Dataform");
+            if (m_assistantName.trimmed().isEmpty())
+                m_assistantName = "Dataform";
+
             qDebug() << "Settings loaded: Provider =" << m_provider << ", Model =" << m_model;
         } else {
             qDebug() << "No valid settings file found, using defaults";
@@ -604,6 +780,20 @@ void SettingsManager::loadSettings()
     emit distillationEnabledChanged();
     emit distillationDailyCyclesChanged();
     emit encryptionModeChanged();
+    emit voiceEnabledChanged();
+    emit speakRepliesChanged();
+    emit sttModelPathChanged();
+    emit sttDeviceChanged();
+    emit sttComputeTypeChanged();
+    emit sttLanguageChanged();
+    emit sttVadModelPathChanged();
+    emit micDeviceNameChanged();
+    emit ttsBackendChanged();
+    emit piperExePathChanged();
+    emit piperVoicePathChanged();
+    emit sapiVoiceNameChanged();
+    emit ttsSpeedChanged();
+    emit assistantNameChanged();
     emit settingsLoaded();
 }
 
@@ -647,6 +837,20 @@ void SettingsManager::resetToDefaults()
     m_distillationEnabled = false;
     m_distillationDailyCycles = 3;
     m_encryptionMode = "portable";
+    m_voiceEnabled = false;
+    m_speakReplies = true;
+    m_sttModelPath.clear();
+    m_sttDevice = "cuda";
+    m_sttComputeType = "float16";
+    m_sttLanguage = "en";
+    m_sttVadModelPath.clear();
+    m_micDeviceName.clear();
+    m_ttsBackend = "piper";
+    m_piperExePath.clear();
+    m_piperVoicePath.clear();
+    m_sapiVoiceName.clear();
+    m_ttsSpeed = 1.0;
+    m_assistantName = "Dataform";
 
     emit userNameChanged();
     emit providerChanged();
@@ -684,6 +888,20 @@ void SettingsManager::resetToDefaults()
     emit distillationEnabledChanged();
     emit distillationDailyCyclesChanged();
     emit encryptionModeChanged();
+    emit voiceEnabledChanged();
+    emit speakRepliesChanged();
+    emit sttModelPathChanged();
+    emit sttDeviceChanged();
+    emit sttComputeTypeChanged();
+    emit sttLanguageChanged();
+    emit sttVadModelPathChanged();
+    emit micDeviceNameChanged();
+    emit ttsBackendChanged();
+    emit piperExePathChanged();
+    emit piperVoicePathChanged();
+    emit sapiVoiceNameChanged();
+    emit ttsSpeedChanged();
+    emit assistantNameChanged();
 
     saveSettings();
 }

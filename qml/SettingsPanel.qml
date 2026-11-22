@@ -132,6 +132,31 @@ Rectangle {
                     }
                 }
             }
+
+            TabButton {
+                text: "Voice"
+                width: implicitWidth
+                contentItem: Text {
+                    text: parent.text
+                    font.pixelSize: 13
+                    font.bold: settingsTabBar.currentIndex === 4
+                    color: settingsTabBar.currentIndex === 4 ? "#4fc1ff" : "#888888"
+                    horizontalAlignment: Text.AlignHCenter
+                    verticalAlignment: Text.AlignVCenter
+                }
+                background: Rectangle {
+                    color: settingsTabBar.currentIndex === 4 ? "#1e1e1e" : "#2d2d30"
+                    radius: 6
+                    Rectangle {
+                        anchors.bottom: parent.bottom
+                        anchors.left: parent.left
+                        anchors.right: parent.right
+                        height: 2
+                        color: "#4fc1ff"
+                        visible: settingsTabBar.currentIndex === 4
+                    }
+                }
+            }
         }
 
         // Divider under tabs
@@ -2115,6 +2140,15 @@ Rectangle {
                         Layout.bottomMargin: 20
                     }
                 }
+            }
+
+            // ============================================================
+            // TAB 5: VOICE
+            // ============================================================
+            VoiceSettingsPanel {
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                labelWidth: settingsRoot.labelWidth
             }
         }
     }

@@ -340,6 +340,12 @@ Rectangle {
             }
         }
 
+        // Push-to-talk and turn state. Self-hiding when voice is unavailable.
+        VoiceBar {
+            id: voiceBar
+            Layout.fillWidth: true
+        }
+
         // Input area with DropArea for image drag-drop
         Rectangle {
             id: inputContainer
@@ -553,6 +559,22 @@ Rectangle {
                 chatRoot.lastMessageDate = ""
                 addMessage("system", "DATAFORM online. New conversation started.")
             }
+        }
+    }
+
+    // A spoken request never passes through the input field, so the transcript
+    // has to be put into the transcript view here. The reply then arrives via
+    // onAssistantResponseReady like any typed turn.
+    Connections {
+        target: voiceBar.available ? voiceSession : null
+        enabled: voiceBar.available
+
+        function onTranscriptCommitted(text) {
+            addMessage("user", text)
+        }
+
+        function onTurnAbandoned(reason) {
+            addMessage("system", reason)
         }
     }
 

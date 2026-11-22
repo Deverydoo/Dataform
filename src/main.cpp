@@ -54,6 +54,14 @@
 #include "llamacppmanager.h"
 #endif
 
+#ifdef DATAFORM_VOICE_ENABLED
+#include "voice/audiocapture.h"
+#include "voice/audioplayback.h"
+#include "voice/speechrecognizer.h"
+#include "voice/speechsynthesizer.h"
+#include "voice/voicesession.h"
+#endif
+
 // --- Debug log file handler ---
 static QFile *g_debugLogFile = nullptr;
 static QMutex g_logMutex;
@@ -208,6 +216,15 @@ int main(int argc, char *argv[])
 #ifdef DATAFORM_LLAMACPP_ENABLED
     // 19. llama.cpp Manager - embedded inference for background tasks
     LlamaCppManager llamaCppManager;
+#endif
+
+#ifdef DATAFORM_VOICE_ENABLED
+    // 20. Voice loop - microphone, Muninn transcription, local speech synthesis
+    AudioCapture audioCapture;
+    AudioPlayback audioPlayback;
+    SpeechRecognizer speechRecognizer;
+    SpeechSynthesizer speechSynthesizer;
+    VoiceSession voiceSession;
 #endif
 
     // --- Wire dependencies ---
@@ -694,6 +711,27 @@ int main(int argc, char *argv[])
         }
     });
 
+#ifdef DATAFORM_VOICE_ENABLED
+    voiceSession.setAudioCapture(&audioCapture);
+    voiceSession.setAudioPlayback(&audioPlayback);
+    voiceSession.setSpeechRecognizer(&speechRecognizer);
+    voiceSession.setSpeechSynthesizer(&speechSynthesizer);
+    voiceSession.setOrchestrator(&orchestrator);
+    voiceSession.setSettingsManager(&settingsManager);
+
+    // Spoken reminders. The scheduler stays authoritative: the voice layer only
+    // reads out what it already delivered, and announce() declines while a turn
+    // is live so it cannot talk over the user.
+    QObject::connect(&reminderEngine, &ReminderEngine::reminderTriggered,
+                     &voiceSession, [&voiceSession, &settingsManager](qint64, const QString &content) {
+        if (settingsManager.voiceEnabled() && settingsManager.speakReplies())
+            voiceSession.announce(QStringLiteral("Reminder: %1").arg(content));
+    });
+
+    // Loads the speech model if voice is already enabled in the saved profile.
+    voiceSession.applySettings();
+#endif
+
     // Start ReminderEngine polling timer
     reminderEngine.start();
 
@@ -712,6 +750,12 @@ int main(int argc, char *argv[])
     QObject::connect(&app, &QCoreApplication::aboutToQuit, [&]() {
         idleScheduler.stop();
         reminderEngine.stop();
+#ifdef DATAFORM_VOICE_ENABLED
+        // Releases the microphone and kills any Piper process before the audio
+        // devices are torn down under us.
+        voiceSession.cancel();
+        audioCapture.stop();
+#endif
         goalTracker.onIdleWindowClosed();
         learningEngine.onIdleWindowClosed();
         newsEngine.onIdleWindowClosed();
@@ -787,6 +831,19 @@ int main(int argc, char *argv[])
 
 #ifdef DATAFORM_LLAMACPP_ENABLED
     engine.rootContext()->setContextProperty("llamaCppManager", &llamaCppManager);
+#endif
+
+#ifdef DATAFORM_VOICE_ENABLED
+    engine.rootContext()->setContextProperty("voiceSession", &voiceSession);
+    engine.rootContext()->setContextProperty("audioCapture", &audioCapture);
+    engine.rootContext()->setContextProperty("speechRecognizer", &speechRecognizer);
+    engine.rootContext()->setContextProperty("speechSynthesizer", &speechSynthesizer);
+    engine.rootContext()->setContextProperty("voiceBuildEnabled", true);
+#else
+    // QML always references voiceBuildEnabled; a text-only build reports false
+    // rather than leaving the binding undefined.
+    engine.rootContext()->setContextProperty("voiceSession", QVariant());
+    engine.rootContext()->setContextProperty("voiceBuildEnabled", false);
 #endif
 
     const QUrl url(u"qrc:/Dataform/qml/Main.qml"_qs);

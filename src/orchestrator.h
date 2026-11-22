@@ -100,6 +100,10 @@ signals:
     // Learning signals
     void learningSignalQueued(qint64 episodeId, const QString &signalType);
 
+    // Agentic loop progress. Lets the UI distinguish "thinking" from "acting",
+    // which the voice session surfaces as a separate state.
+    void toolInvocationStarted(const QString &toolName);
+
     // Conversation signals
     void currentConversationIdChanged();
     void conversationLoaded(qint64 id, QVariantList messages);

@@ -16,10 +16,33 @@ option(DATAFORM_ENABLE_TRAINING "Enable ONNX Runtime Training support" ON)
 # --- llama.cpp embedded inference (optional) ---
 option(DATAFORM_ENABLE_LLAMACPP "Enable embedded llama.cpp inference for background tasks" OFF)
 
+# --- Voice loop: Muninn speech recognition + local speech synthesis (optional) ---
+#
+# Off unless Muninn is actually present. Muninn lives in its own repository
+# alongside Loki Studio, so a clone of this project on a fresh machine has to
+# still configure and build.
+option(DATAFORM_ENABLE_VOICE "Enable the spoken assistant loop (requires Muninn)" ON)
+
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake")
 
 if(DATAFORM_ENABLE_TRAINING)
     find_package(OnnxRuntimeTraining REQUIRED)
+endif()
+
+if(DATAFORM_ENABLE_VOICE)
+    # Not REQUIRED: a missing Muninn downgrades to a text-only build with a clear
+    # reason rather than failing configuration outright.
+    find_package(Muninn QUIET)
+    if(Muninn_FOUND)
+        find_package(Qt6 REQUIRED COMPONENTS Multimedia)
+        message(STATUS "DATAFORM: voice loop ON (muninn=${Muninn_LIBRARIES})")
+    else()
+        set(DATAFORM_ENABLE_VOICE OFF)
+        message(WARNING
+            "DATAFORM: Muninn was not found — the voice loop is disabled and the app "
+            "will be text-only. Point -DMUNINN_ROOT=<path to Muninn-Faster-Whisper> at "
+            "a built checkout, or configure with -DDATAFORM_ENABLE_VOICE=OFF to silence this.")
+    endif()
 endif()
 
 if(DATAFORM_ENABLE_LLAMACPP)
@@ -131,10 +154,36 @@ set(DATAFORM_LLAMACPP_SOURCES
     src/llamacppmanager.cpp
 )
 
+# --- Voice sources (conditional) ---
+# Kept out of the target entirely when voice is off: these headers declare
+# Q_OBJECT inside DATAFORM_VOICE_ENABLED, which AUTOMOC would otherwise moc into
+# references to classes the preprocessor removed.
+set(DATAFORM_VOICE_SOURCES
+    src/voice/audiocapture.h
+    src/voice/audiocapture.cpp
+    src/voice/audioplayback.h
+    src/voice/audioplayback.cpp
+    src/voice/speechrecognizer.h
+    src/voice/speechrecognizer.cpp
+    src/voice/speechsynthesizer.h
+    src/voice/speechsynthesizer.cpp
+    src/voice/ttsbackends.h
+    src/voice/ttsbackends.cpp
+    src/voice/voicesession.h
+    src/voice/voicesession.cpp
+)
+if(WIN32)
+    list(APPEND DATAFORM_VOICE_SOURCES
+        src/voice/sapiworker.h
+        src/voice/sapiworker.cpp
+    )
+endif()
+
 qt_add_executable(Dataform
     ${DATAFORM_CORE_SOURCES}
     $<$<BOOL:${DATAFORM_ENABLE_TRAINING}>:${DATAFORM_TRAINING_SOURCES}>
     $<$<BOOL:${DATAFORM_ENABLE_LLAMACPP}>:${DATAFORM_LLAMACPP_SOURCES}>
+    $<$<BOOL:${DATAFORM_ENABLE_VOICE}>:${DATAFORM_VOICE_SOURCES}>
     dataform.rc
 )
 
@@ -150,6 +199,8 @@ qt_add_qml_module(Dataform
         qml/LineagePanel.qml
         qml/ConversationSidebar.qml
         qml/ModelCatalogPanel.qml
+        qml/VoiceBar.qml
+        qml/VoiceSettingsPanel.qml
 )
 
 target_link_libraries(Dataform PRIVATE
@@ -204,6 +255,79 @@ if(DATAFORM_ENABLE_LLAMACPP)
     target_include_directories(Dataform PRIVATE
         ${CMAKE_SOURCE_DIR}/third_party/llama.cpp/include
     )
+endif()
+
+# --- Voice loop linking ---
+if(DATAFORM_ENABLE_VOICE)
+    target_link_libraries(Dataform PRIVATE Qt6::Multimedia Muninn::Muninn)
+    target_compile_definitions(Dataform PRIVATE DATAFORM_VOICE_ENABLED)
+
+    if(WIN32)
+        # sapi.h lives in the Windows SDK; sapi.lib carries the CLSIDs/IIDs.
+        target_link_libraries(Dataform PRIVATE sapi ole32)
+    endif()
+
+    # Muninn brings its own CTranslate2 and ONNX Runtime. Copying what sits beside
+    # muninn.dll keeps the runtime set consistent with the build it came from,
+    # rather than leaving the loader to find a mismatched copy on PATH.
+    set(_muninn_runtime_dlls "")
+    set(_muninn_dll_names muninn.dll ctranslate2.dll)
+
+    # onnxruntime.dll is deliberately excluded from that list when training is on.
+    # The ORT training package is a superset of the plain runtime Muninn was built
+    # against, so one copy can serve both — but only if it is the training one.
+    # Muninn's plain build would satisfy Silero VAD and then fail every training
+    # symbol the reflection engine needs.
+    if(NOT DATAFORM_ENABLE_TRAINING)
+        list(APPEND _muninn_dll_names onnxruntime.dll)
+    endif()
+
+    foreach(_dll ${_muninn_dll_names})
+        if(EXISTS "${Muninn_DLL_PATH}/${_dll}")
+            list(APPEND _muninn_runtime_dlls "${Muninn_DLL_PATH}/${_dll}")
+        endif()
+    endforeach()
+
+    if(_muninn_runtime_dlls)
+        add_custom_command(TARGET Dataform POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                ${_muninn_runtime_dlls} "$<TARGET_FILE_DIR:Dataform>"
+            COMMENT "Copying Muninn runtime DLLs to output directory"
+        )
+    endif()
+
+    # One onnxruntime.dll serves the whole process, so it has to be new enough for
+    # Muninn. Muninn is compiled against ORT 1.23, whose ORT_API_VERSION is 23;
+    # the C API is backward but not forward compatible, so an older runtime makes
+    # Muninn's GetApi call return null and its neural VAD fail at the first
+    # utterance. The stock training package from NuGet is 1.19 (API 19) and trips
+    # this — see Docs/decisions/0002-onnxruntime-unification.md.
+    set(DATAFORM_MUNINN_REQUIRED_ORT_API 23)
+
+    if(DATAFORM_ENABLE_TRAINING)
+        if(OnnxRuntimeTraining_API_VERSION LESS DATAFORM_MUNINN_REQUIRED_ORT_API)
+            message(WARNING
+                "DATAFORM: the ONNX Runtime in third_party/onnxruntime-training reports "
+                "ORT_API_VERSION=${OnnxRuntimeTraining_API_VERSION}, but Muninn needs at least "
+                "${DATAFORM_MUNINN_REQUIRED_ORT_API}. Neural VAD will fail at runtime. Build ORT from "
+                "source with --enable_training_apis as described in "
+                "Docs/decisions/0002-onnxruntime-unification.md, or accept energy VAD.")
+            set(DATAFORM_MUNINN_NEURAL_VAD OFF)
+        else()
+            message(STATUS
+                "DATAFORM: one ONNX Runtime (API ${OnnxRuntimeTraining_API_VERSION}) serves both the "
+                "training tier and Muninn — neural VAD available.")
+            set(DATAFORM_MUNINN_NEURAL_VAD ON)
+        endif()
+    else()
+        # Without the training tier, Muninn's own runtime is copied and matches
+        # what it was built against by construction.
+        set(DATAFORM_MUNINN_NEURAL_VAD ON)
+    endif()
+
+    if(DATAFORM_MUNINN_NEURAL_VAD)
+        target_compile_definitions(Dataform PRIVATE DATAFORM_MUNINN_NEURAL_VAD)
+    endif()
 endif()
 
 set_target_properties(Dataform PROPERTIES

@@ -452,6 +452,7 @@ void Orchestrator::onLLMResponse(const QString &response)
         m_agentLoop.currentToolIndex = 0;
 
         const ToolCallRequest &firstCall = m_agentLoop.pendingToolCalls.first();
+        emit toolInvocationStarted(firstCall.toolName);
         m_toolRegistry->executeTool(firstCall.toolName, firstCall.params);
         return;  // Wait for toolExecutionComplete signal
     }
@@ -632,6 +633,7 @@ void Orchestrator::onToolExecutionComplete(const ToolResult &result)
     m_agentLoop.currentToolIndex++;
     if (m_agentLoop.currentToolIndex < m_agentLoop.pendingToolCalls.size()) {
         const ToolCallRequest &nextCall = m_agentLoop.pendingToolCalls[m_agentLoop.currentToolIndex];
+        emit toolInvocationStarted(nextCall.toolName);
         m_toolRegistry->executeTool(nextCall.toolName, nextCall.params);
     } else {
         // All tools executed — send back to LLM for next iteration

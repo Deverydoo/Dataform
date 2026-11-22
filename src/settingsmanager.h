@@ -58,6 +58,21 @@ class SettingsManager : public QObject
     Q_PROPERTY(int distillationDailyCycles READ distillationDailyCycles WRITE setDistillationDailyCycles NOTIFY distillationDailyCyclesChanged)
     // Security settings
     Q_PROPERTY(QString encryptionMode READ encryptionMode WRITE setEncryptionMode NOTIFY encryptionModeChanged)
+    // Voice settings (spoken assistant)
+    Q_PROPERTY(bool voiceEnabled READ voiceEnabled WRITE setVoiceEnabled NOTIFY voiceEnabledChanged)
+    Q_PROPERTY(bool speakReplies READ speakReplies WRITE setSpeakReplies NOTIFY speakRepliesChanged)
+    Q_PROPERTY(QString sttModelPath READ sttModelPath WRITE setSttModelPath NOTIFY sttModelPathChanged)
+    Q_PROPERTY(QString sttDevice READ sttDevice WRITE setSttDevice NOTIFY sttDeviceChanged)
+    Q_PROPERTY(QString sttComputeType READ sttComputeType WRITE setSttComputeType NOTIFY sttComputeTypeChanged)
+    Q_PROPERTY(QString sttLanguage READ sttLanguage WRITE setSttLanguage NOTIFY sttLanguageChanged)
+    Q_PROPERTY(QString sttVadModelPath READ sttVadModelPath WRITE setSttVadModelPath NOTIFY sttVadModelPathChanged)
+    Q_PROPERTY(QString micDeviceName READ micDeviceName WRITE setMicDeviceName NOTIFY micDeviceNameChanged)
+    Q_PROPERTY(QString ttsBackend READ ttsBackend WRITE setTtsBackend NOTIFY ttsBackendChanged)
+    Q_PROPERTY(QString piperExePath READ piperExePath WRITE setPiperExePath NOTIFY piperExePathChanged)
+    Q_PROPERTY(QString piperVoicePath READ piperVoicePath WRITE setPiperVoicePath NOTIFY piperVoicePathChanged)
+    Q_PROPERTY(QString sapiVoiceName READ sapiVoiceName WRITE setSapiVoiceName NOTIFY sapiVoiceNameChanged)
+    Q_PROPERTY(double ttsSpeed READ ttsSpeed WRITE setTtsSpeed NOTIFY ttsSpeedChanged)
+    Q_PROPERTY(QString assistantName READ assistantName WRITE setAssistantName NOTIFY assistantNameChanged)
 
 public:
     explicit SettingsManager(const QString &profilePath, QObject *parent = nullptr);
@@ -188,6 +203,49 @@ public:
     QString encryptionMode() const { return m_encryptionMode; }
     void setEncryptionMode(const QString &mode);
 
+    // Voice (spoken assistant)
+    bool voiceEnabled() const { return m_voiceEnabled; }
+    void setVoiceEnabled(bool enabled);
+
+    bool speakReplies() const { return m_speakReplies; }
+    void setSpeakReplies(bool enabled);
+
+    QString sttModelPath() const { return m_sttModelPath; }
+    void setSttModelPath(const QString &path);
+
+    QString sttDevice() const { return m_sttDevice; }
+    void setSttDevice(const QString &device);
+
+    QString sttComputeType() const { return m_sttComputeType; }
+    void setSttComputeType(const QString &computeType);
+
+    QString sttLanguage() const { return m_sttLanguage; }
+    void setSttLanguage(const QString &language);
+
+    QString sttVadModelPath() const { return m_sttVadModelPath; }
+    void setSttVadModelPath(const QString &path);
+
+    QString micDeviceName() const { return m_micDeviceName; }
+    void setMicDeviceName(const QString &name);
+
+    QString ttsBackend() const { return m_ttsBackend; }
+    void setTtsBackend(const QString &backend);
+
+    QString piperExePath() const { return m_piperExePath; }
+    void setPiperExePath(const QString &path);
+
+    QString piperVoicePath() const { return m_piperVoicePath; }
+    void setPiperVoicePath(const QString &path);
+
+    QString sapiVoiceName() const { return m_sapiVoiceName; }
+    void setSapiVoiceName(const QString &name);
+
+    double ttsSpeed() const { return m_ttsSpeed; }
+    void setTtsSpeed(double speed);
+
+    QString assistantName() const { return m_assistantName; }
+    void setAssistantName(const QString &name);
+
     Q_INVOKABLE void saveSettings();
     Q_INVOKABLE void loadSettings();
     Q_INVOKABLE void resetToDefaults();
@@ -229,6 +287,20 @@ signals:
     void distillationEnabledChanged();
     void distillationDailyCyclesChanged();
     void encryptionModeChanged();
+    void voiceEnabledChanged();
+    void speakRepliesChanged();
+    void sttModelPathChanged();
+    void sttDeviceChanged();
+    void sttComputeTypeChanged();
+    void sttLanguageChanged();
+    void sttVadModelPathChanged();
+    void micDeviceNameChanged();
+    void ttsBackendChanged();
+    void piperExePathChanged();
+    void piperVoicePathChanged();
+    void sapiVoiceNameChanged();
+    void ttsSpeedChanged();
+    void assistantNameChanged();
     void settingsSaved();
     void settingsLoaded();
 
@@ -272,6 +344,23 @@ private:
     bool m_distillationEnabled = false;
     int m_distillationDailyCycles = 3;
     QString m_encryptionMode = "portable";
+
+    // Voice. Off by default: the speech model and Piper are separate downloads,
+    // and a first run should not fail because they are missing.
+    bool m_voiceEnabled = false;
+    bool m_speakReplies = true;
+    QString m_sttModelPath;
+    QString m_sttDevice = "cuda";
+    QString m_sttComputeType = "float16";
+    QString m_sttLanguage = "en";
+    QString m_sttVadModelPath;   // empty = look beside the Whisper model
+    QString m_micDeviceName;
+    QString m_ttsBackend = "piper";
+    QString m_piperExePath;
+    QString m_piperVoicePath;
+    QString m_sapiVoiceName;
+    double m_ttsSpeed = 1.0;
+    QString m_assistantName = "Dataform";
 };
 
 #endif // SETTINGSMANAGER_H
